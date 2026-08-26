@@ -30,7 +30,25 @@ def _safe_call(func, *args, retries: int = 2, **kwargs):
 
 
 def fetch_pe_pb_history(symbol: str) -> Optional[pd.DataFrame]:
-    """个股历史 PE(TTM)/PB（东财价值分析，2018年至今）"""
+    """个股历史 PE(TTM)/PB
+    优先：Tushare daily_basic（付费兜底，数据全）
+    兜底：东财 stock_value_em（免费，2018年至今）
+    """
+    # 1. Tushare 优先
+    try:
+        from data.tushare_fetcher import tushare_enabled, fetch_daily_basic, to_ts_code
+        if tushare_enabled():
+            df = fetch_daily_basic(ts_code=to_ts_code(symbol))
+            if df is not None and not df.empty:
+                df = df.rename(columns={"trade_date": "trade_date", "pe_ttm": "pe_ttm", "pb": "pb"})
+                df["trade_date"] = pd.to_datetime(df["trade_date"])
+                df = df.sort_values("trade_date").reset_index(drop=True)
+                logger.info(f"估值历史(来自Tushare): {symbol} {len(df)}行")
+                return df
+    except Exception as e:
+        logger.warning(f"Tushare估值历史失败 {symbol}: {e}")
+
+    # 2. 东财兜底
     ak = __import__("akshare", fromlist=["stock_value_em"])
     df = _safe_call(ak.stock_value_em, symbol=symbol)
     if df is None or df.empty:

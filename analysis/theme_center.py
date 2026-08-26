@@ -52,9 +52,28 @@ def fetch_concept_boards() -> Optional[pd.DataFrame]:
 
 @ttl_cache(300)
 def fetch_limit_up_pool(date: str = "") -> Optional[pd.DataFrame]:
-    """涨停板池（当日/指定日期，缓存5分钟）"""
+    """涨停板池（当日/指定日期，缓存5分钟）；Tushare(付费兜底) → 东财"""
     if not date:
         date = pd.Timestamp.now().strftime("%Y%m%d")
+
+    # 1. Tushare 优先（收盘后有精确涨跌停列表）
+    try:
+        from data.tushare_fetcher import tushare_enabled, fetch_limit_list
+        if tushare_enabled():
+            df = fetch_limit_list(date, "U")
+            if df is not None and not df.empty:
+                # 兼容东财涨停池字段
+                df["代码"] = df["code"].str[-6:]
+                df["名称"] = df.get("名称", "")
+                df["涨跌幅"] = df.get("pct_chg", 10.0)
+                df["连板数"] = df.get("limit_times", 1)
+                df["所属行业"] = df.get("industry", "")
+                df["封板资金"] = df.get("fund", 0)
+                return df[["代码", "名称", "涨跌幅", "连板数", "所属行业", "封板资金"]]
+    except Exception as e:
+        logger.warning(f"Tushare涨停池失败: {e}")
+
+    # 2. 东财
     ak = __import__("akshare", fromlist=["stock_zt_pool_em"])
     df = _safe_call(ak.stock_zt_pool_em, date=date)
     return df

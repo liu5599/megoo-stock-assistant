@@ -37,21 +37,66 @@ def _safe_call(func, *args, retries: int = 1, **kwargs):
 
 @ttl_cache(300)
 def fetch_fund_flow_rank(indicator: str = "今日") -> Optional[pd.DataFrame]:
-    """个股资金流排行（今日/3日/5日/10日，缓存5分钟）；东财熔断后直接返回 None 快速降级"""
+    """个股资金流排行；东财直连(突破限频) → Tushare(付费兜底) → akshare → 降级"""
     global _eastmoney_circuit_open
+
+    # 1. 东财直连（Cookie预热+域名轮换，限频期间也能用）
+    try:
+        from data.eastmoney_direct import fetch_stock_flow_rank, reset_circuit
+        if _eastmoney_circuit_open:
+            reset_circuit()  # 直连层有自己的熔断，允许重试
+        df = fetch_stock_flow_rank(100)
+        if df is not None and not df.empty:
+            return df
+    except Exception as e:
+        logger.warning(f"东财直连资金流失败: {e}")
+
+    # 2. Tushare 优先（配置了 token 且当日数据已更新时）
+    try:
+        from data.tushare_fetcher import tushare_enabled, fetch_moneyflow
+        if tushare_enabled():
+            import time as _t
+            df = fetch_moneyflow(_t.strftime("%Y%m%d"))
+            if df is not None and not df.empty:
+                # 标准化为东财 rank 兼容格式
+                df = df.sort_values("main_net", ascending=False)
+                df["代码"] = df["code"].str[-6:]
+                df["名称"] = ""
+                df["今日主力净流入-净额"] = df["main_net"]
+                df["今日涨跌幅"] = 0.0
+                return df[["代码", "名称", "今日涨跌幅", "今日主力净流入-净额"]]
+    except Exception as e:
+        logger.warning(f"Tushare资金流失败: {e}")
+
+    # 3. akshare 东财接口（熔断保护）
     if _eastmoney_circuit_open:
         return None
     ak = __import__("akshare", fromlist=["stock_individual_fund_flow_rank"])
     df = _safe_call(ak.stock_individual_fund_flow_rank, indicator=indicator)
     if df is None:
         _eastmoney_circuit_open = True
-        logger.info("东财资金流接口熔断开启，后续请求直接降级")
+        logger.info("akshare东财资金流接口熔断开启，后续请求直接降级")
     return df
 
 
-@ttl_cache(3600)
 def fetch_lhb_detail(start_date: str = "", end_date: str = "") -> Optional[pd.DataFrame]:
-    """龙虎榜详情（缓存1小时）"""
+    """龙虎榜详情（缓存1小时）；Tushare(付费兜底) → 东财"""
+    # 1. Tushare 优先
+    try:
+        from data.tushare_fetcher import tushare_enabled, fetch_top_list
+        if tushare_enabled():
+            import time as _t
+            df = fetch_top_list(_t.strftime("%Y%m%d"))
+            if df is not None and not df.empty:
+                df["代码"] = df["code"].str[-6:]
+                df["龙虎榜净买额"] = df["net_amount"]
+                df["上榜原因"] = df.get("reason", "")
+                df["涨跌幅"] = df.get("pct_change", 0)
+                return df[["代码", "名称", "龙虎榜净买额", "上榜原因", "涨跌幅"]]
+    except Exception as e:
+        logger.warning(f"Tushare龙虎榜失败: {e}")
+
+    # 2. 东财
     if not start_date:
         end = pd.Timestamp.now()
         start = end - pd.Timedelta(days=6)

@@ -7,6 +7,7 @@ import json
 import time
 from typing import Dict, Any, Optional
 import pandas as pd
+import numpy as np
 
 import sys, os
 # 确保项目根目录在路径中（仅当需要时）
@@ -51,6 +52,17 @@ def _fmt_raw(fmt: str, raw) -> str:
     if fmt == "pct":
         return f"{v:+.1f}%"
     return f"{v:.2f}"
+
+
+def _safe_round(v, nd: int = 1):
+    """安全四舍五入：NaN/Inf/None → None，避免 JSON 序列化报错"""
+    try:
+        f = float(v)
+    except (ValueError, TypeError):
+        return None
+    if pd.isna(f) or np.isinf(f):
+        return None
+    return round(f, nd)
 
 
 class RankingService:
@@ -380,7 +392,7 @@ class RankingService:
                                 raw = None
                         factors[fname] = {
                             "label": meta["label"],
-                            "score": round(float(score), 1),
+                            "score": _safe_round(score),
                             "raw_text": _fmt_raw(meta["fmt"], raw),
                             "direction": meta["direction"],
                             "weight": meta["weight"],
@@ -390,9 +402,9 @@ class RankingService:
                     item = {
                         "code": code,
                         "name": row.get("name", ""),
-                        "total_score": round(float(row.get("total_score", 0)), 1),
-                        "tech_score": round(float(row.get("tech_score", 0)), 1),
-                        "fund_score": round(float(row.get("fund_score", 0)), 1),
+                        "total_score": _safe_round(row.get("total_score")),
+                        "tech_score": _safe_round(row.get("tech_score")),
+                        "fund_score": _safe_round(row.get("fund_score")),
                         "rank": int(row.get("rank", 0)),
                         "factors": factors,
                     }
@@ -405,9 +417,9 @@ class RankingService:
                 "results": result_list,
                 "summary": {
                     "total_stocks": len(result_list),
-                    "mean_score": round(float(results["total_score"].mean()), 1) if not results.empty else 0,
-                    "max_score": round(float(results["total_score"].max()), 1) if not results.empty else 0,
-                    "min_score": round(float(results["total_score"].min()), 1) if not results.empty else 0,
+                    "mean_score": _safe_round(results["total_score"].mean()) if not results.empty else 0,
+                    "max_score": _safe_round(results["total_score"].max()) if not results.empty else 0,
+                    "min_score": _safe_round(results["total_score"].min()) if not results.empty else 0,
                     "tech_weight": tech_weight,
                     "fund_weight": fund_weight,
                     "pool": pool,
