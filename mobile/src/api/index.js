@@ -42,4 +42,9 @@ export function fetchPlans(codes, capital = 1000000) {
   return request('/api/ops/plan?codes=' + encodeURIComponent(codes) + '&capital=' + capital)
 }
 
-export default { fetchOverview, fetchStocks, fetchReport, pushReport, fetchPlans }
+// Quant 量化大数据分析
+export function fetchQuant() {
+  return request('/api/ops/quant')
+}
+
+export default { fetchOverview, fetchStocks, fetchReport, pushReport, fetchPlans, fetchQuant }

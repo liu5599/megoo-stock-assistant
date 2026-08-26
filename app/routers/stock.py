@@ -140,3 +140,27 @@ async def get_compass_analysis(code: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{code}/factor-history")
+async def factor_history(code: str, factor: str = Query("momentum_20", description="技术因子名")):
+    """因子历史时序（第三层下钻）"""
+    import asyncio
+    from app.services.factor_detail_service import FactorDetailService
+    try:
+        svc = FactorDetailService(get_raw_fetcher())
+        return await asyncio.to_thread(svc.factor_history, code, factor)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{code}/factor-peer")
+async def factor_peer(code: str, factor: str = Query("momentum_20", description="技术因子名")):
+    """同行业因子对比 + 分位（第四层下钻）"""
+    import asyncio
+    from app.services.factor_detail_service import FactorDetailService
+    try:
+        svc = FactorDetailService(get_raw_fetcher())
+        return await asyncio.to_thread(svc.factor_peer, code, factor)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

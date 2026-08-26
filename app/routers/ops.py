@@ -217,6 +217,22 @@ def ops_theme_detail(board_name: str):
     return clean_jsonable(detail)
 
 
+@router.get("/quant")
+def ops_quant():
+    """Quant 量化大数据分析：市场画像/风格轮动/风险状态/组合风险"""
+    from analysis.market_temperature import clean_jsonable
+    from analysis.quant_analytics import QuantAnalytics
+
+    q = QuantAnalytics()
+    result = {
+        "market": q.market_snapshot(),
+        "style": q.style_rotation(),
+        "risk": q.risk_regime(),
+        "timestamp": __import__("time").strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    return clean_jsonable(result)
+
+
 @router.get("/report")
 def ops_report(codes: str = Query("", description="自选股代码，逗号分隔")):
     """生成操盘日报 Markdown"""

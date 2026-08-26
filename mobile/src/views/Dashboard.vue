@@ -32,6 +32,30 @@
         <van-empty v-else description="暂无温度数据" />
       </div>
 
+      <!-- Quant 量化视角 -->
+      <div class="card" v-if="quant.market">
+        <div class="section-title" style="margin-top:0">🧮 Quant 量化视角</div>
+        <div class="list-item" style="border:none;padding:0 0 8px">
+          <div class="item-main">
+            <div class="item-title">{{ quant.market.market_state }}</div>
+            <div class="item-sub">宽度(20日) {{ quant.market.breadth_20 }}% ｜ 平均相关性 {{ quant.market.avg_correlation }}</div>
+          </div>
+        </div>
+        <div v-if="quant.style.styles" class="list-item" style="padding:6px 0" v-for="(s, i) in quant.style.styles" :key="i">
+          <div class="item-main">
+            <div class="item-title" style="font-size:13px">{{ s.pair }}</div>
+            <div class="item-sub">{{ s.a.name }} {{ fmtPct(s.a.ret_20) }} vs {{ s.b.name }} {{ fmtPct(s.b.ret_20) }}</div>
+          </div>
+          <van-tag :type="s.leader === s.a.name ? 'danger' : 'primary'">{{ s.leader }}占优</van-tag>
+        </div>
+        <div v-if="quant.risk && quant.risk.available" class="list-item" style="border:none;padding:8px 0 0">
+          <div class="item-main">
+            <div class="item-title" style="font-size:13px">⚠️ 风险状态：{{ quant.risk.regime }}</div>
+            <div class="item-sub">{{ quant.risk.note }}</div>
+          </div>
+        </div>
+      </div>
+
       <!-- 涨跌 + 多空 -->
       <div class="stat-grid" style="margin-bottom:12px">
         <div class="stat-card">
@@ -108,12 +132,13 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { showToast } from 'vant'
-import { fetchOverview } from '../api'
+import { fetchOverview, fetchQuant } from '../api'
 
 const refreshing = ref(false)
 const loading = ref(false)
 const errorMsg = ref('')
 const data = ref(null)
+const quant = ref({})
 
 const temp = computed(() => data.value?.temperature || null)
 const act = computed(() => temp.value?.details?.activity || {})
@@ -145,7 +170,10 @@ async function load() {
   loading.value = true
   errorMsg.value = ''
   try {
-    data.value = await fetchOverview()
+    const [ov, qn] = await Promise.allSettled([fetchOverview(), fetchQuant()])
+    if (ov.status === 'fulfilled') data.value = ov.value
+    else errorMsg.value = '盘面加载失败：' + (ov.reason?.message || '网络错误')
+    if (qn.status === 'fulfilled') quant.value = qn.value
   } catch (e) {
     errorMsg.value = '加载失败：' + e.message + '（检查后端地址是否可访问）'
     showToast('加载失败：' + e.message)

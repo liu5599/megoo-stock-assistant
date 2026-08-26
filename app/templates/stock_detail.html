@@ -68,6 +68,9 @@
 .factor-score { text-align: right; font-weight: 600; }
 .factor-raw { text-align: right; color: var(--text-muted); font-size: 0.72rem; }
 .factor-desc { grid-column: 1 / -1; font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.5rem; padding-left: 2px; }
+.flink { cursor: pointer; margin-left: 0.3rem; opacity: 0.75; text-decoration: none; }
+.flink:hover { opacity: 1; }
+.factor-detail-box { margin: 0 0 0.5rem; padding: 0.4rem; background: var(--bg-secondary); border-radius: 6px; }
 </style>
 {% endblock %}
 
@@ -202,17 +205,92 @@ function renderFactorPanel(row) {
     Object.entries(facs).forEach(([k, f]) => {
         const dir = (f.direction != null && f.direction < 0) ? '↓反向' : '↑正向';
         const scoreW = Math.min(100, Math.max(0, Number(f.score) || 0));
+        const isTech = f.category !== 'fund';
+        // 技术因子可下钻：📈历史时序 / 🏢分行业对比
+        const actions = isTech
+            ? `<a class="flink" title="历史时序" onclick="loadFactorDetail('${k}','history')">📈</a><a class="flink" title="分行业对比" onclick="loadFactorDetail('${k}','peer')">🏢</a>`
+            : '';
         const rowHtml = `<div class="factor-row">
-            <div class="factor-name" title="${f.desc||''}">${f.label||k}</div>
+            <div class="factor-name" title="${f.desc||''}">${f.label||k} ${actions}</div>
             <div class="factor-bar"><div class="factor-bar-fill" style="width:${scoreW}%"></div></div>
             <div class="factor-score">${f.score != null ? f.score : '-'}</div>
             <div class="factor-raw">${f.raw_text || '-'}<br><span style="color:var(--text-muted);font-size:0.68rem">${dir}</span></div>
             <div class="factor-desc">${f.desc||''}</div>
-        </div>`;
+        </div>
+        <div class="factor-detail-box" id="fd-${k}" style="display:none"></div>`;
         (f.category === 'fund' ? fund : tech).push(rowHtml);
     });
     const box = (title, rows) => rows.length ? `<div class="factor-group-box"><h4>${title}</h4>${rows.join('')}</div>` : '';
     return `<div class="factor-grid">${box('🔧 技术因子', tech)}${box('💰 基本面因子', fund)}</div>`;
+}
+
+async function loadFactorDetail(k, type) {
+    const box = document.getElementById('fd-' + k);
+    if (!box) return;
+    // 再次点击同类型则收起
+    if (box.style.display !== 'none' && box.dataset.type === type) {
+        box.style.display = 'none';
+        return;
+    }
+    box.style.display = 'block';
+    box.dataset.type = type;
+    box.innerHTML = '<div class="loading-spinner"><div class="spinner"></div>加载中...</div>';
+    const url = type === 'history'
+        ? `/api/stock/${CODE}/factor-history?factor=${k}`
+        : `/api/stock/${CODE}/factor-peer?factor=${k}`;
+    try {
+        const resp = await fetch(url);
+        const data = await resp.json();
+        if (data.error) { box.innerHTML = `<p style="color:var(--text-muted)">${data.error}</p>`; return; }
+        if (type === 'history') {
+            box.innerHTML = `<canvas id="hist-${k}" style="max-height:200px;width:100%"></canvas>`;
+            renderHistoryChart(k, data);
+        } else {
+            box.innerHTML = renderPeer(data);
+        }
+    } catch (e) {
+        box.innerHTML = '<p style="color:var(--text-muted)">加载失败</p>';
+    }
+}
+
+function renderHistoryChart(k, data) {
+    const canvas = document.getElementById('hist-' + k);
+    if (!canvas || typeof Chart === 'undefined') return;
+    new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels: data.dates,
+            datasets: [{ label: data.label, data: data.values, borderColor: '#e74c3c', borderWidth: 1.5, pointRadius: 0, fill: false }],
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: { x: { display: false }, y: { grid: { display: false } } },
+        },
+    });
+}
+
+function renderPeer(data) {
+    let html = `<div style="font-size:0.8rem;margin-bottom:0.4rem">
+        <strong>${data.label}</strong>：${data.value != null ? data.value : '-'} ｜ 在「${data.sector}」中排 <strong style="color:var(--accent)">前 ${data.percentile}%</strong>
+    </div>`;
+    const peers = data.peers || [];
+    const maxAbs = Math.max(...peers.map(p => Math.abs(p.value)), 0.01);
+    html += '<div style="max-height:220px;overflow:auto">';
+    peers.forEach(p => {
+        const isSelf = p.code === data.code;
+        const w = Math.round(Math.abs(p.value) / maxAbs * 100);
+        const color = p.value >= 0 ? '#e74c3c' : '#27ae60';
+        html += `<div style="display:flex;align-items:center;gap:0.5rem;font-size:0.75rem;margin-bottom:3px;${isSelf ? 'background:rgba(231,76,60,0.08);border-radius:4px;padding:2px 4px' : ''}">
+            <span style="width:72px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${isSelf ? 'font-weight:700' : ''}">${p.name}</span>
+            <div style="flex:1;background:var(--bg-secondary);height:8px;border-radius:4px;overflow:hidden">
+                <div style="width:${w}%;height:100%;background:${color};border-radius:4px"></div>
+            </div>
+            <span style="width:60px;text-align:right">${p.value}</span>
+        </div>`;
+    });
+    html += '</div>';
+    return html;
 }
 
 async function loadCompass() {

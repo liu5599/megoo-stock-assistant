@@ -29,27 +29,64 @@ INDEX_MAP = {
 
 
 def _get_index_kline(code: str, days: int = 250):
-    """获取指数K线（复用数据源，带缓存）"""
+    """获取指数K线（复用数据源，带缓存；东财空数据时降级 baostock）"""
     from data.data_utils import get_best_fetcher
-    fetcher = get_best_fetcher()
+    start = (pd.Timestamp.now() - pd.Timedelta(days=int(days * 1.6))).strftime("%Y%m%d")
+    end = pd.Timestamp.now().strftime("%Y%m%d")
+
+    # 1. 主 fetcher
     try:
-        kl = fetcher.get_history_kline(
-            code, "daily",
-            pd.Timestamp.now().strftime("%Y%m%d") if False else
-            (pd.Timestamp.now() - pd.Timedelta(days=int(days * 1.6))).strftime("%Y%m%d"),
-            pd.Timestamp.now().strftime("%Y%m%d"), "qfq")
-        if kl is None:
-            return None
-        df = getattr(kl, "df", kl)
-        if df is None or df.empty:
-            return None
-        df = df.copy()
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.set_index("date")
-        return df
+        fetcher = get_best_fetcher()
+        kl = fetcher.get_history_kline(code, "daily", start, end, "qfq")
+        if kl is not None:
+            df = getattr(kl, "df", kl)
+            if df is not None and not df.empty:
+                df = df.copy()
+                df["date"] = pd.to_datetime(df["date"])
+                df = df.set_index("date")
+                return df
     except Exception as e:
-        logger.warning(f"指数K线失败 {code}: {e}")
-        return None
+        logger.warning(f"指数K线失败(主源) {code}: {e}")
+
+    # 2. baostock 兜底（东财限频/空数据时；指数需显式 sh/sz 前缀）
+    try:
+        _INDEX_BS_MAP = {
+            "000001": "sh.000001", "000300": "sh.000300", "000016": "sh.000016",
+            "000905": "sh.000905", "000852": "sh.000852", "000688": "sh.000688",
+            "399001": "sz.399001", "399006": "sz.399006",
+        }
+        bs_code = _INDEX_BS_MAP.get(code)
+        if bs_code:
+            import baostock as bs
+            import socket as _socket
+            old = _socket.getdefaulttimeout()
+            _socket.setdefaulttimeout(10)
+            try:
+                lg = bs.login()
+                if lg.error_code == "0":
+                    # baostock 日期格式要求 YYYY-MM-DD
+                    bs_start = f"{start[:4]}-{start[4:6]}-{start[6:]}"
+                    bs_end = f"{end[:4]}-{end[4:6]}-{end[6:]}"
+                    rs = bs.query_history_k_data_plus(
+                        bs_code, "date,open,high,low,close,volume",
+                        start_date=bs_start, end_date=bs_end, frequency="d", adjustflag="2")
+                    rows = []
+                    while rs and rs.error_code == "0" and rs.next():
+                        rows.append(rs.get_row_data())
+                    bs.logout()
+                    if rows:
+                        df = pd.DataFrame(rows, columns=rs.fields)
+                        for col in ("open", "high", "low", "close", "volume"):
+                            df[col] = pd.to_numeric(df[col], errors="coerce")
+                        df["date"] = pd.to_datetime(df["date"])
+                        df = df.set_index("date").dropna(subset=["close"])
+                        logger.info(f"指数K线(baostock兜底): {code} {len(df)}行")
+                        return df
+            finally:
+                _socket.setdefaulttimeout(old)
+    except Exception as e:
+        logger.warning(f"指数K线失败(baostock) {code}: {e}")
+    return None
 
 
 class QuantAnalytics:
