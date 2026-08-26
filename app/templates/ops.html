@@ -76,6 +76,12 @@
         <div id="temp-area" class="loading">加载中...</div>
     </div>
 
+    <!-- Quant 量化视角 -->
+    <div class="card">
+        <div class="card-title">🧮 Quant 量化视角（市场结构/风格/风险）</div>
+        <div id="quant-area" class="loading">加载中...</div>
+    </div>
+
     <!-- 涨跌 + 多空 -->
     <div class="grid-2">
         <div class="card">
@@ -172,6 +178,38 @@ function sigBadge(sig) {
     if (sig === '多') return '<span class="badge badge-buy">做多</span>';
     if (sig === '空') return '<span class="badge badge-sell">做空</span>';
     return '<span class="badge badge-hold">观望</span>';
+}
+
+async function loadQuant() {
+    const area = document.getElementById('quant-area');
+    try {
+        const r = await fetch('/api/ops/quant');
+        const d = await r.json();
+        const m = d.market || {};
+        const st = d.style?.styles || [];
+        const rk = d.risk || {};
+        let html = '';
+        if (m.available) {
+            html += `<div class="stat-line"><b>市场状态：</b>${esc(m.market_state)} <span class="muted">（宽度 ${m.breadth_20}%，平均相关性 ${m.avg_correlation}）</span></div>`;
+        }
+        st.forEach(s => {
+            html += `<div class="stat-line">风格轮动：${esc(s.pair)} → <b>${esc(s.leader)}</b>占优（${esc(s.a.name)} ${fmtPct(s.a.ret_20)} vs ${esc(s.b.name)} ${fmtPct(s.b.ret_20)}）</div>`;
+        });
+        if (rk.available) {
+            html += `<div class="stat-line">风险状态：<b>${esc(rk.regime)}</b>（20日波动 ${rk.vol_20}%，250日最大回撤 ${rk.max_drawdown_250}%）</div>`;
+        }
+        // 指数表现
+        if (m.indices?.length) {
+            html += `<div class="scroll-x"><table><thead><tr><th>指数</th><th>20日</th><th>60日</th><th>250日</th><th>年化波动</th></tr></thead><tbody>`;
+            m.indices.forEach(x => {
+                html += `<tr><td>${esc(x.index)}</td><td class="${x.ret_20 >= 0 ? 'up' : 'down'}">${fmtPct(x.ret_20)}</td><td class="${x.ret_60 >= 0 ? 'up' : 'down'}">${fmtPct(x.ret_60)}</td><td class="${x.ret_250 >= 0 ? 'up' : 'down'}">${fmtPct(x.ret_250)}</td><td>${x.vol}%</td></tr>`;
+            });
+            html += `</tbody></table></div>`;
+        }
+        area.innerHTML = html || '<div class="muted">Quant 数据暂不可用（指数源受限）</div>';
+    } catch (e) {
+        area.innerHTML = '<div class="muted">Quant 加载失败：' + esc(e.message) + '</div>';
+    }
 }
 
 async function loadOverview() {
@@ -306,6 +344,7 @@ async function generateReport(push) {
 
 // 初始加载
 loadOverview();
+loadQuant();
 loadStocks();
 </script>
 {% endblock %}

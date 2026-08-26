@@ -28,8 +28,9 @@ INDEX_MAP = {
 }
 
 
+@ttl_cache(1800)
 def _get_index_kline(code: str, days: int = 250):
-    """获取指数K线（复用数据源，带缓存；东财空数据时降级 baostock）"""
+    """获取指数K线（30分钟缓存；东财空数据时降级 baostock）"""
     from data.data_utils import get_best_fetcher
     start = (pd.Timestamp.now() - pd.Timedelta(days=int(days * 1.6))).strftime("%Y%m%d")
     end = pd.Timestamp.now().strftime("%Y%m%d")
