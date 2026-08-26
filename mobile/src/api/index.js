@@ -47,4 +47,19 @@ export function fetchQuant() {
   return request('/api/ops/quant')
 }
 
-export default { fetchOverview, fetchStocks, fetchReport, pushReport, fetchPlans, fetchQuant }
+// 组合风险（VaR/夏普/回撤/相关性）
+export function fetchPortfolioRisk(codes) {
+  return request('/api/ops/portfolio/risk?codes=' + encodeURIComponent(codes))
+}
+
+// 个股深度详情（K线/信号/估值/计划 —— 第二层钻取）
+export function fetchStockDetail(code) {
+  return request('/api/ops/stock/' + code + '/detail')
+}
+
+// 题材详情（成分股 —— 第二层钻取）
+export function fetchThemeDetail(name) {
+  return request('/api/ops/theme/' + name + '/detail')
+}
+
+export default { fetchOverview, fetchStocks, fetchReport, pushReport, fetchPlans, fetchQuant, fetchPortfolioRisk, fetchStockDetail, fetchThemeDetail }

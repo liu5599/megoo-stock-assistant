@@ -263,9 +263,9 @@ async function loadStocks() {
         const r = await fetch('/api/ops/stocks?codes=' + encodeURIComponent(WATCHLIST_CODES));
         const d = await r.json();
         const rows = (d.stocks || []).map(s => `
-            <tr>
+            <tr class="clickable-row" onclick="location.href='/stock/${esc(s.code)}'" title="点击查看 ${esc(s.name || s.code)} 深度分析">
                 <td>${esc(s.code)}</td>
-                <td>${esc(s.name)}</td>
+                <td>${esc(s.name || '-')}</td>
                 <td>${s.price ?? '-'}</td>
                 <td>${sigBadge(s.long_term?.signal)}</td>
                 <td>${sigBadge(s.swing?.signal)}</td>

@@ -7,6 +7,8 @@ const routes = [
   { path: '/themes', name: 'themes', component: () => import('../views/Themes.vue'), meta: { title: '题材' } },
   { path: '/money', name: 'money', component: () => import('../views/Money.vue'), meta: { title: '资金' } },
   { path: '/report', name: 'report', component: () => import('../views/Report.vue'), meta: { title: '日报' } },
+  { path: '/stock/:code', name: 'stockDetail', component: () => import('../views/StockDetail.vue'), meta: { title: '个股详情' } },
+  { path: '/theme/:name', name: 'themeDetail', component: () => import('../views/ThemeDetail.vue'), meta: { title: '题材详情' } },
 ]
 
 const router = createRouter({

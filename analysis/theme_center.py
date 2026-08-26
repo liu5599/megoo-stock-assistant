@@ -188,9 +188,31 @@ class ThemeCenter:
         return []
 
     def get_theme_detail(self, board_name: str) -> Dict:
-        """单个题材深度：成分股涨幅榜 → 龙头识别"""
+        """单个题材深度：成分股涨幅榜 → 龙头识别
+        主源：东财概念成分；限频时降级为涨停池同行业股票。
+        """
         df = fetch_board_cons(board_name)
         if df is None or df.empty:
+            # 降级：涨停池中该行业股票（稳定源）
+            zt = fetch_limit_up_pool()
+            fallback = []
+            if zt is not None and not zt.empty and "所属行业" in zt.columns:
+                pool = zt[zt["所属行业"].astype(str).str.contains(board_name, na=False)]
+                for _, r in pool.iterrows():
+                    fallback.append({
+                        "code": r.get("代码", ""),
+                        "name": r.get("名称", ""),
+                        "price": r.get("最新价"),
+                        "pct_chg": r.get("涨跌幅"),
+                        "turnover": None,
+                        "pe": None,
+                        "total_mv": None,
+                        "seal_amount": r.get("封板资金"),
+                        "boards": r.get("连板数"),
+                    })
+            if fallback:
+                return {"name": board_name, "stocks": fallback,
+                        "leader": fallback[0] if fallback else None, "source": "涨停池降级"}
             return {"name": board_name, "stocks": [], "leader": None}
         rename = {
             "代码": "code", "名称": "name", "最新价": "price",

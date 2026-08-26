@@ -16,8 +16,8 @@
       <div style="font-size:12px;opacity:.9">{{ portfolio.note }}</div>
     </div>
 
-    <!-- 交易计划卡片 -->
-    <div v-for="p in plans" :key="p.code" class="card">
+    <!-- 交易计划卡片（点击进入详情） -->
+    <div v-for="p in plans" :key="p.code" class="card plan-card" @click="goDetail(p.code)">
       <div class="list-item" style="border:none;padding:0 0 10px">
         <div class="item-main">
           <div class="item-title">{{ p.name }}（{{ p.code }}）</div>
@@ -39,6 +39,18 @@
         <van-cell title="单笔风险" :value="`≤${(p.risk_amount / 10000).toFixed(0)}万`" />
       </van-cell-group>
 
+      <!-- 组合风控（Quant） -->
+      <div class="card" v-if="portfolioRisk.available">
+        <div class="section-title" style="margin-top:0">🧮 组合风控</div>
+        <div class="grid2">
+          <div class="stat"><div class="stat-num" :class="portfolioRisk.var_95 < 0 ? 'down' : 'up'">{{ portfolioRisk.var_95 }}%</div><div class="stat-label">VaR95(日)</div></div>
+          <div class="stat"><div class="stat-num">{{ portfolioRisk.sharpe }}</div><div class="stat-label">夏普比率</div></div>
+          <div class="stat"><div class="stat-num down">{{ portfolioRisk.max_drawdown }}%</div><div class="stat-label">最大回撤</div></div>
+          <div class="stat"><div class="stat-num">{{ portfolioRisk.avg_correlation }}</div><div class="stat-label">平均相关性</div></div>
+        </div>
+        <div class="item-sub" style="padding:4px 0 0">年化收益 {{ portfolioRisk.annual_return }}% ｜ 波动 {{ portfolioRisk.annual_vol }}% ｜ VaR99 {{ portfolioRisk.var_99 }}%</div>
+      </div>
+
       <div style="background:#f7f8fa;border-radius:8px;padding:10px;font-size:12px;color:#646566;line-height:1.6">
         <div>📌 逻辑：{{ p.logic.join('；') }}</div>
         <div style="margin-top:4px">⚠️ 风险：{{ p.risks.join('；') }}</div>
@@ -52,12 +64,15 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { showToast } from 'vant'
-import { fetchPlans } from '../api'
+import { useRouter } from 'vue-router'
+import { fetchPlans, fetchPortfolioRisk } from '../api'
 import { getWatchlistCodes, setWatchlistCodes } from '../config'
 
+const router = useRouter()
 const codes = ref(getWatchlistCodes())
 const plans = ref([])
 const portfolio = ref({})
+const portfolioRisk = ref({})
 const loading = ref(false)
 
 function ratingClass(r) {
@@ -88,9 +103,15 @@ async function load() {
   if (!codes.value.trim()) { showToast('请输入股票代码'); return }
   loading.value = true
   try {
-    const d = await fetchPlans(codes.value.trim())
-    plans.value = d.plans || []
-    portfolio.value = d.portfolio || {}
+    const [d, pr] = await Promise.allSettled([
+      fetchPlans(codes.value.trim()),
+      fetchPortfolioRisk(codes.value.trim()),
+    ])
+    if (d.status === 'fulfilled') {
+      plans.value = d.value.plans || []
+      portfolio.value = d.value.portfolio || {}
+    }
+    if (pr.status === 'fulfilled') portfolioRisk.value = pr.value || {}
     if (!plans.value.length) showToast('未获取到数据，请检查代码或网络')
   } catch (e) {
     showToast('加载失败：' + e.message)
@@ -102,6 +123,10 @@ async function load() {
 function saveCodes() {
   setWatchlistCodes(codes.value.trim())
   showToast('自选已保存 ✅')
+}
+
+function goDetail(code) {
+  router.push('/stock/' + code)
 }
 
 onMounted(load)

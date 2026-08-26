@@ -233,6 +233,49 @@ def ops_quant():
     return clean_jsonable(result)
 
 
+@router.get("/portfolio/risk")
+def ops_portfolio_risk(codes: str = Query("", description="持仓/自选股代码，逗号分隔")):
+    """组合风险：VaR / 夏普 / 最大回撤 / 相关性矩阵（Quant 视角）"""
+    from analysis.market_temperature import clean_jsonable
+    from analysis.quant_analytics import QuantAnalytics
+    from data.data_utils import get_best_fetcher
+    import pandas as pd
+    import time as _t
+
+    code_list = [c.strip() for c in codes.split(",") if c.strip()][:10]
+    if not code_list:
+        return clean_jsonable({"available": False, "msg": "请传入持仓代码，如 codes=600519,000001"})
+
+    fetcher = get_best_fetcher()
+    prices = {}
+    names = {}
+    for code in code_list:
+        try:
+            kl = fetcher.get_history_kline(
+                code, "daily",
+                _t.strftime("%Y%m%d", _t.localtime(_t.time() - 180 * 86400)),
+                _t.strftime("%Y%m%d"), "qfq")
+            if kl is not None:
+                df = getattr(kl, "df", None)
+                if df is None:
+                    df = kl
+                if df is not None and not df.empty:
+                    s = df.set_index(pd.to_datetime(df["date"]))["close"]
+                    prices[code] = s
+                    names[code] = getattr(kl, "name", "") or code
+        except Exception as e:
+            logger.warning(f"组合风险 {code} 失败: {e}")
+
+    if len(prices) < 2:
+        return clean_jsonable({"available": False, "msg": "至少需要2只股票的有效K线"})
+
+    frame = pd.DataFrame(prices).dropna()
+    risk = QuantAnalytics().portfolio_risk(frame)
+    risk["codes"] = [{"code": c, "name": names.get(c, c)} for c in frame.columns]
+    risk["available"] = risk.get("available", False) and len(frame) >= 20
+    return clean_jsonable(risk)
+
+
 @router.get("/report")
 def ops_report(codes: str = Query("", description="自选股代码，逗号分隔")):
     """生成操盘日报 Markdown"""

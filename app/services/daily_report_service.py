@@ -58,10 +58,22 @@ class DailyReportService:
             "temperature": _safe(lambda: MarketTemperature().compute_temperature(), {}),
             "themes": _safe(lambda: ThemeCenter(top_n=8).get_overview(), {}),
             "money": _safe(lambda: MoneyFlow(top_n=8).get_overview(), {}),
+            "quant": _safe(lambda: self._collect_quant(), {}),
             "stocks": self._collect_stock_signals(),
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
         return data
+
+    def _collect_quant(self) -> Dict:
+        """Quant 量化视角（市场状态/风格轮动/风险状态）"""
+        from analysis.quant_analytics import QuantAnalytics
+
+        q = QuantAnalytics()
+        return {
+            "market": q.market_snapshot(),
+            "style": q.style_rotation(),
+            "risk": q.risk_regime(),
+        }
 
     def _collect_stock_signals(self) -> List[Dict]:
         """自选股三维决策 + 估值空间"""
@@ -121,6 +133,20 @@ class DailyReportService:
         temp = t.get("temperature", "-")
         lines.append(f"\n## 🌡️ 市场温度：{temp}／100 —— {zone}")
         lines.append(f"\n> {t.get('advice', '')}")
+
+        # 2.5 Quant 量化视角
+        q = data.get("quant", {})
+        q_market = q.get("market") or {}
+        q_style = q.get("style") or {}
+        q_risk = q.get("risk") or {}
+        if q_market.get("available") or q_style.get("styles"):
+            lines.append(f"\n## 🧮 Quant 量化视角")
+            if q_market.get("available"):
+                lines.append(f"\n- **市场状态**：{q_market.get('market_state', '未知')}（宽度{q_market.get('breadth_20', '-')}%，平均相关性{q_market.get('avg_correlation', '-')}）")
+            for st in (q_style.get("styles") or [])[:2]:
+                lines.append(f"- **风格轮动**：{st['pair']} → {st['leader']}占优（{st['a']['name']} {st['a']['ret_20']:+.1f}% vs {st['b']['name']} {st['b']['ret_20']:+.1f}%）")
+            if q_risk.get("available"):
+                lines.append(f"- **风险状态**：{q_risk.get('regime', '未知')}（20日波动{q_risk.get('vol_20', '-')}%，250日最大回撤{q_risk.get('max_drawdown_250', '-')}%）")
         if "details" in t and t["details"].get("activity"):
             act = t["details"]["activity"]
             up = act.get("上涨", 0)

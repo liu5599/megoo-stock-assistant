@@ -7,7 +7,7 @@
         正在获取题材数据，首次约需 15 秒...
       </van-notice-bar>
       <van-tab title="新题材">
-        <div class="card" v-for="(t, i) in newThemes" :key="i">
+        <div class="card" v-for="(t, i) in newThemes" :key="i" @click="goTheme(t.name)">
           <div class="list-item" style="border:none;padding:0 0 8px">
             <div class="item-main">
               <div class="item-title">{{ t.name }}
@@ -28,7 +28,7 @@
       </van-tab>
 
       <van-tab title="热题材">
-        <div class="card" v-for="(t, i) in hotThemes" :key="i">
+        <div class="card" v-for="(t, i) in hotThemes" :key="i" @click="goTheme(t.name)">
           <div class="list-item" style="border:none;padding:0 0 8px">
             <div class="item-main">
               <div class="item-title">{{ t.name }}
@@ -66,8 +66,11 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { fetchOverview } from '../api'
+
+const router = useRouter()
 
 const tab = ref(0)
 const loading = ref(false)
@@ -77,9 +80,13 @@ const hotThemes = ref([])
 const senti = ref([])
 
 function fmtPct(v) {
-  const n = parseFloat(v)
-  if (isNaN(n)) return '-'
+  const n = Number(v)
+  if (isNaN(n) || v === null || v === undefined) return '-'
   return (n > 0 ? '+' : '') + n.toFixed(2) + '%'
+}
+
+function goTheme(name) {
+  router.push('/theme/' + encodeURIComponent(name))
 }
 function fmtYi(v) {
   const n = parseFloat(v || 0)
