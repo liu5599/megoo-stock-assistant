@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}megoo股票助手{% endblock %}</title>
+
+    <!-- HTMX -->
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- Chart.js Financial (candlestick) -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.umd.min.js"></script>
+    <!-- Chart.js Date Adapter (for time scale) -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <!-- CSS -->
+    <link rel="stylesheet" href="/static/css/app.css">
+
+    <!-- 全局 JS 常量 -->
+    <script>
+        window.SEARCH_API_URL = '/api/stock/search';
+    </script>
+
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <!-- 顶部导航栏 -->
+    <nav class="navbar">
+        <div class="nav-brand">
+            <span class="brand-icon">🐂</span>
+            <span class="brand-text">megoo股票助手</span>
+        </div>
+        <div class="nav-links">
+            <a href="/dashboard" class="nav-link {% if active_page == 'dashboard' %}active{% endif %}">
+                🏠 市场总览
+            </a>
+            <a href="/ranking" class="nav-link {% if active_page == 'ranking' %}active{% endif %}">
+                📊 选股排名
+            </a>
+            <a href="/surge" class="nav-link {% if active_page == 'surge' %}active{% endif %}">
+                🔥 短线三把锁
+            </a>
+            <a href="/ops" class="nav-link {% if active_page == 'ops' %}active{% endif %}">
+                🎯 操盘台
+            </a>
+            <a href="/compare" class="nav-link {% if active_page == 'compare' %}active{% endif %}">
+                ⚖️ 对比
+            </a>
+            <a href="/backtest" class="nav-link {% if active_page == 'backtest' %}active{% endif %}">
+                📈 回测
+            </a>
+            <a href="/watchlist" class="nav-link {% if active_page == 'watchlist' %}active{% endif %}">
+                ⭐ 自选股
+            </a>
+        </div>
+        <div class="nav-search">
+            <input type="text"
+                   id="nav-stock-search"
+                   class="search-input"
+                   placeholder="搜索股票代码/名称..."
+                   autocomplete="off">
+            <div id="nav-search-results" class="search-dropdown"></div>
+        </div>
+    </nav>
+
+    <!-- 主内容区 -->
+    <main class="main-content">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- 页脚 -->
+    <footer class="footer">
+        <p>⚠️ 本工具仅供学习研究，不构成任何投资建议 | 股市有风险，投资需谨慎</p>
+    </footer>
+
+    <!-- 全局 JS -->
+    <script src="/static/js/app.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

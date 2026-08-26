@@ -1,0 +1,413 @@
+{% extends "base.html" %}
+{% block title %}选股排名 — megoo股票助手{% endblock %}
+{% block head %}
+<style>
+.clickable-row { cursor: pointer; transition: background 0.15s; }
+.clickable-row:hover { background: rgba(231,76,60,0.08) !important; }
+.clickable-row td.code { color: var(--red-up); font-weight: 600; text-decoration: underline; }
+.ranking-layout { display: grid; grid-template-columns: 320px 1fr; gap: 1rem; }
+@media (max-width: 900px) { .ranking-layout { grid-template-columns: 1fr; } }
+.factor-panel { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; }
+.factor-group { margin-bottom: 0.75rem; }
+.factor-group-title { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.35rem; text-transform: uppercase; letter-spacing: 0.5px; }
+.factor-item { display: flex; align-items: center; gap: 0.35rem; padding: 0.2rem 0; font-size: 0.82rem; }
+.factor-item label { flex: 1; cursor: pointer; }
+.factor-item input[type="checkbox"] { accent-color: var(--accent-green); }
+.factor-item input[type="range"] { width: 70px; accent-color: var(--accent); }
+.factor-weight-val { width: 32px; text-align: right; font-size: 0.78rem; color: var(--text-secondary); }
+.strategy-bar { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+.star { color: var(--gold); }
+.hidden { display: none; }
+.factor-detail-row td { padding: 0.5rem 1rem; background: var(--bg-secondary); border-top: 1px dashed var(--border); }
+.factor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+@media (max-width: 700px) { .factor-grid { grid-template-columns: 1fr; } }
+.factor-group-box { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem; }
+.factor-group-box h4 { margin: 0 0 0.5rem; font-size: 0.85rem; }
+.factor-row { display: grid; grid-template-columns: 108px 1fr 44px 68px; gap: 0.5rem; align-items: center; font-size: 0.78rem; margin-bottom: 0.4rem; }
+.factor-name { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.factor-bar { height: 8px; background: var(--bg-secondary); border-radius: 4px; overflow: hidden; }
+.factor-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), #f0b90b); border-radius: 4px; }
+.factor-score { text-align: right; font-weight: 600; }
+.factor-raw { text-align: right; color: var(--text-muted); font-size: 0.72rem; }
+.factor-desc { grid-column: 1 / -1; font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.5rem; padding-left: 2px; }
+</style>
+.hidden { display: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1 style="margin-bottom:0.75rem;">📊 多因子选股排名</h1>
+
+<div class="ranking-layout">
+    <!-- 左侧：因子选择面板 -->
+    <div>
+        <div class="factor-panel">
+            <h3 style="margin-bottom:0.5rem;">🧩 因子策略配置</h3>
+
+            <div class="factor-group">
+                <div class="factor-group-title">🔧 技术因子</div>
+                <div id="tech-factors">
+                    <div class="factor-item"><label><input type="checkbox" class="tech-cb" data-factor="momentum" checked onchange="updateWeights()"> 20日动量</label><input type="range" min="0" max="100" value="35" class="tech-wt" oninput="updateWeights()"><span class="factor-weight-val">35</span></div>
+                    <div class="factor-item"><label><input type="checkbox" class="tech-cb" data-factor="volatility" checked onchange="updateWeights()"> 低波动率</label><input type="range" min="0" max="100" value="30" class="tech-wt" oninput="updateWeights()"><span class="factor-weight-val">30</span></div>
+                    <div class="factor-item"><label><input type="checkbox" class="tech-cb" data-factor="volume_corr" checked onchange="updateWeights()"> 量价配合</label><input type="range" min="0" max="100" value="35" class="tech-wt" oninput="updateWeights()"><span class="factor-weight-val">35</span></div>
+                    <div class="factor-item"><label><input type="checkbox" class="tech-cb" data-factor="rsi" onchange="updateWeights()"> RSI(14)</label><input type="range" min="0" max="100" value="20" class="tech-wt" oninput="updateWeights()"><span class="factor-weight-val">0</span></div>
+                    <div class="factor-item"><label><input type="checkbox" class="tech-cb" data-factor="ma_dev" onchange="updateWeights()"> 均线偏离</label><input type="range" min="0" max="100" value="20" class="tech-wt" oninput="updateWeights()"><span class="factor-weight-val">0</span></div>
+                    <div class="factor-item"><label><input type="checkbox" class="tech-cb" data-factor="reversal" onchange="updateWeights()"> 短期反转</label><input type="range" min="0" max="100" value="25" class="tech-wt" oninput="updateWeights()"><span class="factor-weight-val">0</span></div>
+                    <div class="factor-item"><label><input type="checkbox" class="tech-cb" data-factor="turnover" onchange="updateWeights()"> 换手率</label><input type="range" min="0" max="100" value="20" class="tech-wt" oninput="updateWeights()"><span class="factor-weight-val">0</span></div>
+                </div>
+            </div>
+
+            <div class="factor-group">
+                <div class="factor-group-title">💰 基本面因子</div>
+                <div id="fund-factors">
+                    <div class="factor-item"><label><input type="checkbox" class="fund-cb" data-factor="pe" checked onchange="updateWeights()"> 低PE</label><input type="range" min="0" max="100" value="35" class="fund-wt" oninput="updateWeights()"><span class="factor-weight-val">35</span></div>
+                    <div class="factor-item"><label><input type="checkbox" class="fund-cb" data-factor="roe" checked onchange="updateWeights()"> 高ROE</label><input type="range" min="0" max="100" value="35" class="fund-wt" oninput="updateWeights()"><span class="factor-weight-val">35</span></div>
+                    <div class="factor-item"><label><input type="checkbox" class="fund-cb" data-factor="revenue" checked onchange="updateWeights()"> 营收增长</label><input type="range" min="0" max="100" value="30" class="fund-wt" oninput="updateWeights()"><span class="factor-weight-val">30</span></div>
+                    <div class="factor-item"><label><input type="checkbox" class="fund-cb" data-factor="pb" onchange="updateWeights()"> 低PB</label><input type="range" min="0" max="100" value="20" class="fund-wt" oninput="updateWeights()"><span class="factor-weight-val">0</span></div>
+                    <div class="factor-item"><label><input type="checkbox" class="fund-cb" data-factor="profit" onchange="updateWeights()"> 利润增长</label><input type="range" min="0" max="100" value="20" class="fund-wt" oninput="updateWeights()"><span class="factor-weight-val">0</span></div>
+                    <div class="factor-item"><label><input type="checkbox" class="fund-cb" data-factor="debt" onchange="updateWeights()"> 低负债率</label><input type="range" min="0" max="100" value="20" class="fund-wt" oninput="updateWeights()"><span class="factor-weight-val">0</span></div>
+                    <div class="factor-item"><label><input type="checkbox" class="fund-cb" data-factor="margin" onchange="updateWeights()"> 毛利率</label><input type="range" min="0" max="100" value="20" class="fund-wt" oninput="updateWeights()"><span class="factor-weight-val">0</span></div>
+                </div>
+            </div>
+
+            <!-- 大类权重 -->
+            <div class="factor-group">
+                <div class="factor-group-title">⚖️ 大类权重</div>
+                <div class="factor-item">
+                    <label>技术面</label>
+                    <input type="range" min="0" max="100" id="tech-total" value="40" oninput="document.getElementById('fund-total').value=100-this.value;document.getElementById('tv').textContent=this.value+'%';document.getElementById('fv').textContent=(100-this.value)+'%'">
+                    <span class="factor-weight-val" id="tv">40%</span>
+                </div>
+                <div class="factor-item">
+                    <label>基本面</label>
+                    <input type="range" min="0" max="100" id="fund-total" value="60" disabled>
+                    <span class="factor-weight-val" id="fv">60%</span>
+                </div>
+            </div>
+
+            <div class="factor-group">
+                <label class="form-label">股票池</label>
+                <select class="form-select" id="pool-select">
+                    <option value="popular">🔥 热门活跃（300只）</option>
+                    <option value="watchlist">⭐ 我的自选股</option>
+                    <option value="hs300">沪深300（300只）</option>
+                    <option value="zz500">中证500（500只）</option>
+                    <option value="sz50">上证50（50只）</option>
+                    <option value="all">🌐 全市场扫描（2000只）</option>
+                </select>
+            </div>
+            <div class="factor-group">
+                <label class="form-label">Top N</label>
+                <select class="form-select" id="top-n">
+                    <option value="10">Top 10</option>
+                    <option value="20" selected>Top 20</option>
+                    <option value="50">Top 50</option>
+                </select>
+            </div>
+
+            <!-- 筛选条件 -->
+            <div class="factor-group">
+                <div class="factor-group-title" style="cursor:pointer;" onclick="document.getElementById('filter-body').classList.toggle('hidden')">
+                    🔍 筛选条件 ▾
+                </div>
+                <div id="filter-body" class="hidden">
+                    <div class="form-row">
+                        <div class="form-group"><label class="form-label">PE ≤</label><input type="number" class="form-input filter-input" id="f-pe" placeholder="不限" step="0.1"></div>
+                        <div class="form-group"><label class="form-label">PB ≤</label><input type="number" class="form-input filter-input" id="f-pb" placeholder="不限" step="0.1"></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label class="form-label">ROE ≥ (%)</label><input type="number" class="form-input filter-input" id="f-roe" placeholder="不限" step="0.1"></div>
+                        <div class="form-group"><label class="form-label">营收增长 ≥ (%)</label><input type="number" class="form-input filter-input" id="f-rev" placeholder="不限" step="0.1"></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label class="form-label">利润增长 ≥ (%)</label><input type="number" class="form-input filter-input" id="f-prof" placeholder="不限" step="0.1"></div>
+                        <div class="form-group"><label class="form-label">毛利率 ≥ (%)</label><input type="number" class="form-input filter-input" id="f-gm" placeholder="不限" step="0.1"></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label class="form-label">资产负债率 ≤ (%)</label><input type="number" class="form-input filter-input" id="f-debt" placeholder="不限" step="0.1"></div>
+                        <div class="form-group"><label class="form-label">最低市值(亿) ≥</label><input type="number" class="form-input filter-input" id="f-mcap" placeholder="不限" step="1"></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label class="form-label">价格 ≥ (元)</label><input type="number" class="form-input filter-input" id="f-price_min" placeholder="不限" step="0.01"></div>
+                        <div class="form-group"><label class="form-label">价格 ≤ (元)</label><input type="number" class="form-input filter-input" id="f-price_max" placeholder="不限" step="0.01"></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">行业（逗号分隔，如：医药生物,食品饮料）</label>
+                        <input type="text" class="form-input filter-input" id="f-sector" placeholder="不限">
+                    </div>
+                    <div style="font-size:0.7rem;color:var(--text-muted);margin-top:0.25rem;">留空 = 不限，筛选条件在评分前剔除不符合的股票</div>
+                </div>
+            </div>
+
+            <div class="strategy-bar">
+                <button class="btn btn-primary" style="flex:1;justify-content:center;" onclick="runRanking()" id="run-btn">🚀 开始分析</button>
+                <button class="btn btn-secondary" onclick="saveStrategy()" title="保存当前策略到本地">💾</button>
+                <button class="btn btn-secondary" onclick="loadStrategy()" title="加载已保存策略">📂</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 右侧：结果 -->
+    <div>
+        <div id="ranking-results">
+            <div style="text-align:center;padding:3rem;color:var(--text-muted);">
+                <p style="font-size:3rem;">📊</p>
+                <p>配置因子后点击「开始分析」</p>
+                <p style="font-size:0.8rem;margin-top:0.5rem;">技术面因子：动量、低波动、量价配合、RSI、均线偏离、反转<br>基本面因子：低PE、高ROE、营收增长、低PB、利润增长、低负债、毛利率</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function updateWeights() {
+    // 归一化技术因子权重
+    const techCBs = document.querySelectorAll('.tech-cb:checked');
+    const techWts = document.querySelectorAll('.tech-wt');
+    let techTotal = 0;
+    techCBs.forEach(cb => {
+        const row = cb.closest('.factor-item');
+        const slider = row.querySelector('.tech-wt');
+        const val = parseInt(slider.value) || 0;
+        techTotal += val;
+    });
+    // 归一化
+    techCBs.forEach(cb => {
+        const row = cb.closest('.factor-item');
+        const slider = row.querySelector('.tech-wt');
+        const span = row.querySelector('.factor-weight-val');
+        const raw = parseInt(slider.value) || 0;
+        const norm = techTotal > 0 ? Math.round(raw / techTotal * 100) : 0;
+        span.textContent = norm;
+    });
+
+    // 同理基本面
+    const fundCBs = document.querySelectorAll('.fund-cb:checked');
+    let fundTotal = 0;
+    fundCBs.forEach(cb => {
+        const row = cb.closest('.factor-item');
+        const slider = row.querySelector('.fund-wt');
+        fundTotal += parseInt(slider.value) || 0;
+    });
+    fundCBs.forEach(cb => {
+        const row = cb.closest('.factor-item');
+        const slider = row.querySelector('.fund-wt');
+        const span = row.querySelector('.factor-weight-val');
+        const raw = parseInt(slider.value) || 0;
+        const norm = fundTotal > 0 ? Math.round(raw / fundTotal * 100) : 0;
+        span.textContent = norm;
+    });
+}
+
+function getFactorConfig() {
+    const config = { tech: {}, fund: {}, tech_total: 0, fund_total: 0 };
+
+    const techCBs = document.querySelectorAll('.tech-cb:checked');
+    let techRawTotal = 0;
+    techCBs.forEach(cb => {
+        const row = cb.closest('.factor-item');
+        const raw = parseInt(row.querySelector('.tech-wt').value) || 0;
+        techRawTotal += raw;
+    });
+    techCBs.forEach(cb => {
+        const row = cb.closest('.factor-item');
+        const raw = parseInt(row.querySelector('.tech-wt').value) || 0;
+        config.tech[cb.dataset.factor] = techRawTotal > 0 ? Math.round(raw / techRawTotal * 100) : 0;
+    });
+
+    const fundCBs = document.querySelectorAll('.fund-cb:checked');
+    let fundRawTotal = 0;
+    fundCBs.forEach(cb => {
+        const row = cb.closest('.factor-item');
+        fundRawTotal += parseInt(row.querySelector('.fund-wt').value) || 0;
+    });
+    fundCBs.forEach(cb => {
+        const row = cb.closest('.factor-item');
+        const raw = parseInt(row.querySelector('.fund-wt').value) || 0;
+        config.fund[cb.dataset.factor] = fundRawTotal > 0 ? Math.round(raw / fundRawTotal * 100) : 0;
+    });
+
+    config.tech_total = parseInt(document.getElementById('tech-total').value) / 100;
+    config.fund_total = parseInt(document.getElementById('fund-total').value) / 100;
+    return config;
+}
+
+function saveStrategy() {
+    const cfg = getFactorConfig();
+    // 收集筛选条件
+    const filters = {};
+    ['pe','pb','roe','rev','prof','gm','debt','mcap','sector'].forEach(k => {
+        const el = document.getElementById('f-'+k);
+        if (el && el.value.trim()) filters[k] = el.value.trim();
+    });
+    cfg.filters = filters;
+    cfg.pool = document.getElementById('pool-select').value;
+    cfg.top_n = document.getElementById('top-n').value;
+    localStorage.setItem('megoo-strategy', JSON.stringify(cfg));
+    alert('策略已保存到本地！（含筛选条件）');
+}
+
+function loadStrategy() {
+    const saved = localStorage.getItem('megoo-strategy');
+    if (!saved) { alert('没有已保存的策略'); return; }
+    const cfg = JSON.parse(saved);
+    // 恢复技术因子
+    Object.entries(cfg.tech).forEach(([key, val]) => {
+        const cb = document.querySelector(`.tech-cb[data-factor="${key}"]`);
+        if (cb) cb.checked = true;
+        const slider = document.querySelector(`.factor-item:has(.tech-cb[data-factor="${key}"]) .tech-wt`);
+        if (slider) slider.value = val;
+    });
+    // 恢复基本面因子
+    Object.entries(cfg.fund).forEach(([key, val]) => {
+        const cb = document.querySelector(`.fund-cb[data-factor="${key}"]`);
+        if (cb) cb.checked = true;
+        const slider = document.querySelector(`.factor-item:has(.fund-cb[data-factor="${key}"]) .fund-wt`);
+        if (slider) slider.value = val;
+    });
+    document.getElementById('tech-total').value = (cfg.tech_total * 100).toFixed(0);
+    document.getElementById('fund-total').value = (cfg.fund_total * 100).toFixed(0);
+    document.getElementById('tv').textContent = (cfg.tech_total * 100).toFixed(0) + '%';
+    document.getElementById('fv').textContent = (cfg.fund_total * 100).toFixed(0) + '%';
+    updateWeights();
+
+    // 恢复筛选条件
+    if (cfg.filters) {
+        Object.entries(cfg.filters).forEach(([k, v]) => {
+            const el = document.getElementById('f-'+k);
+            if (el) el.value = v;
+        });
+        document.getElementById('filter-body').classList.remove('hidden');
+    }
+    if (cfg.pool) document.getElementById('pool-select').value = cfg.pool;
+    if (cfg.top_n) document.getElementById('top-n').value = cfg.top_n;
+
+    alert('策略已加载！（含筛选条件）');
+}
+
+async function runRanking() {
+    const btn = document.getElementById('run-btn');
+    btn.disabled = true; btn.textContent = '⏳ 计算中...';
+
+    const pool = document.getElementById('pool-select').value;
+    const topN = document.getElementById('top-n').value;
+    const cfg = getFactorConfig();
+
+    const params = new URLSearchParams({
+        pool, top_n: topN,
+        tech_weight: cfg.tech_total,
+        fund_weight: cfg.fund_total,
+        tech_factors: Object.keys(cfg.tech).join(','),
+        fund_factors: Object.keys(cfg.fund).join(','),
+    });
+    // 传递各因子权重（cfg.tech/fund 已归一化为 0-100）
+    params.append('tech_weights', JSON.stringify(cfg.tech));
+    params.append('fund_weights', JSON.stringify(cfg.fund));
+
+    // 收集筛选条件
+    const filters = {};
+    ['pe','pb','roe','rev','prof','gm','debt','mcap','price_min','price_max'].forEach(k => {
+        const v = document.getElementById('f-'+k).value.trim();
+        if (v) filters[k] = v;
+    });
+    const sector = document.getElementById('f-sector').value.trim();
+    if (sector) filters['sector'] = sector;
+    if (Object.keys(filters).length > 0) params.append('filters', JSON.stringify(filters));
+
+    const container = document.getElementById('ranking-results');
+    container.innerHTML = '<div class="loading-spinner"><div class="spinner"></div><span id="prog-text">初始化...</span></div><div class="progress-bar"><div class="fill" id="prog-fill" style="width:0%"></div></div>';
+
+    try {
+        const resp = await fetch(`/api/ranking/run?${params}`);
+        const { task_id } = await resp.json();
+        let polled = 0;
+        const poll = setInterval(async () => {
+            polled++;
+            try {
+                const s = await fetch(`/api/ranking/status/${task_id}`);
+                const st = await s.json();
+                document.getElementById('prog-text').textContent = st.step||'';
+                document.getElementById('prog-fill').style.width = (st.progress||0)+'%';
+                if (st.status==='done') { clearInterval(poll); showResults(task_id); }
+                else if (st.status==='error') { clearInterval(poll); container.innerHTML=`<div class="card" style="color:var(--red-up)">❌ ${st.error}</div>`; }
+                else if (polled>150) { clearInterval(poll); container.innerHTML='<div class="card" style="color:var(--gold)">⚠️ 超时（数据源较慢，请稍后刷新或重试）</div>'; }
+            } catch(e) { clearInterval(poll); }
+        }, 2000);
+    } catch(e) {
+        container.innerHTML = `<div class="card" style="color:var(--red-up)">❌ ${e.message}</div>`;
+    }
+}
+
+async function showResults(task_id) {
+    const resp = await fetch(`/api/ranking/results/${task_id}`);
+    const data = await resp.json();
+    const container = document.getElementById('ranking-results');
+    if (data.status!=='done') { container.innerHTML=`<div class="card">❌ 无结果</div>`; return; }
+
+    const s=data.summary;
+    let html=`<div class="summary-bar">有效股票:<strong>${s.total_stocks}</strong> | 均分:<strong>${s.mean_score}</strong> | 最高:<strong>${s.max_score}</strong> | 技术:<strong>${(s.tech_weight*100).toFixed(0)}%</strong> | 基本面:<strong>${(s.fund_weight*100).toFixed(0)}%</strong></div>`;
+    html+='<div class="ranking-table-wrapper"><table class="data-table"><thead><tr><th>排名</th><th>代码</th><th>名称</th><th>总得分</th><th>技术面</th><th>基本面</th><th>评级</th><th>操作</th></tr></thead><tbody>';
+    data.results.forEach(r => {
+        let stars=r.total_score>=65?'★★★☆☆':r.total_score>=50?'★★☆☆☆':'★☆☆☆☆';
+        html+=`<tr class="clickable-row" onclick="location.href='/stock/${r.code}?task_id=${task_id}'" title="点击查看 ${r.name||r.code} 详细分析">
+            <td class="rank">${r.rank}</td>
+            <td class="code">${r.code}</td>
+            <td>${r.name||r.code}</td>
+            <td>${formatScore(r.total_score)}</td>
+            <td>${r.tech_score.toFixed(0)}</td>
+            <td>${r.fund_score.toFixed(0)}</td>
+            <td class="star">${stars}</td>
+            <td style="white-space:nowrap">
+                <button onclick="event.stopPropagation();toggleFactor('${r.code}')" style="background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);padding:0.2rem 0.5rem;border-radius:4px;cursor:pointer;font-size:0.75rem;margin-right:0.25rem">📊因子</button>
+                <button onclick="event.stopPropagation();addToWatchlist('${r.code}','${r.name||r.code}')" style="background:var(--accent);color:#fff;border:none;padding:0.2rem 0.5rem;border-radius:4px;cursor:pointer;font-size:0.75rem">⭐加</button>
+            </td>
+        </tr>
+        <tr class="factor-detail-row" id="fd-${r.code}" style="display:none"><td colspan="8">${renderFactors(r)}</td></tr>`;
+    });
+    html+='</tbody></table></div>';
+    container.innerHTML=html;
+}
+
+function toggleFactor(code) {
+    const row = document.getElementById('fd-'+code);
+    if (row) row.style.display = (row.style.display === 'none' || row.style.display === '') ? 'table-row' : 'none';
+}
+
+function renderFactors(r) {
+    const facs = r.factors || {};
+    const tech = [], fund = [];
+    Object.entries(facs).forEach(([k, f]) => {
+        const dir = (f.direction != null && f.direction < 0) ? '↓反向' : '↑正向';
+        const scoreW = Math.min(100, Math.max(0, Number(f.score) || 0));
+        const rowHtml = `<div class="factor-row">
+            <div class="factor-name" title="${f.desc||''}">${f.label||k}</div>
+            <div class="factor-bar"><div class="factor-bar-fill" style="width:${scoreW}%"></div></div>
+            <div class="factor-score">${f.score != null ? f.score : '-'}</div>
+            <div class="factor-raw">${f.raw_text || '-'}<br><span style="color:var(--text-muted);font-size:0.68rem">${dir}</span></div>
+            <div class="factor-desc">${f.desc||''}</div>
+        </div>`;
+        (f.category === 'fund' ? fund : tech).push(rowHtml);
+    });
+    const box = (title, rows) => rows.length ? `<div class="factor-group-box"><h4>${title}</h4>${rows.join('')}</div>` : '';
+    return `<div class="factor-grid">${box('🔧 技术因子', tech)}${box('💰 基本面因子', fund)}</div>`;
+}
+
+async function addToWatchlist(code, name) {
+    try {
+        await fetch(`/api/watchlist/add?codes=${code}&names=${name}`, {method:'POST'});
+    } catch(e) {}
+}
+
+// 页面加载时读取URL参数
+document.addEventListener('DOMContentLoaded', () => {
+    const params = new URLSearchParams(window.location.search);
+    const sector = params.get('sector');
+    if (sector) {
+        const el = document.getElementById('f-sector');
+        if (el) el.value = sector;
+    }
+});
+</script>
+{% endblock %}

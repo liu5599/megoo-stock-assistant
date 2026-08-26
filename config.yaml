@@ -1,0 +1,111 @@
+# ═══════════════════════════════════════════════════════════════
+# megoo股票助手 - 全局配置文件
+# ═══════════════════════════════════════════════════════════════
+
+# ======================== 数据源配置 ========================
+data_source:
+  primary: akshare                # 主数据源: akshare / tushare
+  cache_enabled: true             # 是否启用本地缓存
+  cache_dir: ./cache_data         # 缓存文件目录（parquet格式）
+  cache_ttl:
+    quote: 60                     # 行情缓存秒数
+    kline: 86400                  # K线缓存秒数（1天）
+    financial: 604800             # 财务数据缓存秒数（7天）
+
+# ======================== 股票池配置 ========================
+stock_pool:
+  default: hs300                  # 默认股票池: hs300 / zz500 / sz50 / all
+  exclude_st: true                # 排除ST股票
+  exclude_new_stocks_days: 60     # 排除上市不足N天的次新股
+
+# ======================== 技术因子权重 ========================
+technical_factors:
+  momentum_20:                    # 20日动量因子
+    enabled: true
+    weight: 0.25                  # 在技术因子内的权重
+    direction: 1                  # 1=正向, -1=反向
+  reversal_5:                     # 5日反转因子
+    enabled: true
+    weight: 0.15
+    direction: -1                 # 取负值（反转）
+  volatility_20:                  # 20日波动率因子
+    enabled: true
+    weight: 0.15
+    direction: -1                 # 低波动高分
+  turnover_20:                    # 换手率因子
+    enabled: true
+    weight: 0.10
+    direction: 1
+  volume_price_corr:              # 量价背离因子
+    enabled: true
+    weight: 0.10
+    direction: 1
+  rsi_14:                         # RSI因子
+    enabled: true
+    weight: 0.10
+    direction: -1                 # 低RSI高分（均值回归）
+  ma_deviation:                   # 均线偏离因子
+    enabled: true
+    weight: 0.15
+    direction: -1                 # 低于均线高分（均值回归）
+
+# ======================== 基本面因子权重 ========================
+fundamental_factors:
+  pe:                             # 市盈率因子
+    enabled: true
+    weight: 0.20
+    direction: -1                 # 低PE高分
+  pb:                             # 市净率因子
+    enabled: true
+    weight: 0.15
+    direction: -1                 # 低PB高分
+  roe:                            # ROE因子
+    enabled: true
+    weight: 0.20
+    direction: 1                  # 高ROE高分
+  revenue_growth:                 # 营收增长率
+    enabled: true
+    weight: 0.15
+    direction: 1
+  profit_growth:                  # 净利润增长率
+    enabled: true
+    weight: 0.15
+    direction: 1
+  debt_ratio:                     # 资产负债率
+    enabled: true
+    weight: 0.10
+    direction: -1                 # 低负债高分
+  gross_margin:                   # 毛利率
+    enabled: true
+    weight: 0.05
+    direction: 1
+
+# ======================== 综合策略权重 ========================
+strategy:
+  technical_weight: 0.40          # 技术因子总权重
+  fundamental_weight: 0.60        # 基本面因子总权重
+  top_n: 20                       # 最终输出前N只股票
+
+  # 因子标准化方法: zscore / rank / minmax
+  normalization: rank
+
+  # 异常值处理
+  outlier_method: winsorize       # winsorize / clip / none
+  outlier_percentile: 0.01        # 极值分位数（双侧）
+
+# ======================== 回测配置 ========================
+backtest:
+  start_date: "20250101"          # 回测开始日期
+  end_date: "20260621"            # 回测结束日期
+  rebalance_freq: monthly         # 调仓频率: daily / weekly / monthly
+  commission_rate: 0.0003         # 手续费率（万三）
+  slippage: 0.001                 # 滑点（千一）
+  benchmark: "000300"             # 基准指数（沪深300）
+  initial_capital: 1000000        # 初始资金（元）
+  max_positions: 20               # 最大持仓数
+
+# ======================== 输出配置 ========================
+output:
+  log_level: INFO                 # DEBUG / INFO / WARNING / ERROR
+  report_format: console          # console / html / both
+  report_dir: ./reports           # 报告输出目录

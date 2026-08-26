@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}短线三把锁选股 — megoo股票助手{% endblock %}
+{% block head %}
+<style>
+.period-tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+.period-tab {
+    padding: 0.5rem 1.2rem; border: 1px solid var(--border); border-radius: 6px;
+    cursor: pointer; background: var(--bg-secondary); color: var(--text-secondary);
+    font-size: 0.9rem; transition: all 0.2s;
+}
+.period-tab:hover { border-color: var(--accent); color: var(--text-primary); }
+.period-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.market-bar {
+    display: flex; gap: 1.5rem; align-items: center; padding: 0.6rem 1rem;
+    background: var(--bg-secondary); border-radius: 8px; margin-bottom: 1rem; flex-wrap: wrap;
+    font-size: 0.9rem;
+}
+.signal-card {
+    background: var(--bg-secondary); border: 1px solid var(--border);
+    border-radius: 8px; padding: 1rem; cursor: pointer; transition: all 0.15s;
+}
+.signal-card:hover { border-color: var(--accent); background: rgba(231,76,60,0.05); }
+.signal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+.signal-name { font-weight: 700; font-size: 1rem; }
+.signal-code { color: var(--text-muted); font-size: 0.85rem; }
+.signal-score { font-weight: 700; font-size: 1.1rem; }
+.locks { display: flex; gap: 1rem; margin: 0.5rem 0; font-size: 0.85rem; }
+.lock { padding: 0.15rem 0.5rem; border-radius: 4px; }
+.lock-on { background: rgba(39,174,96,0.15); color: #27ae60; }
+.lock-off { background: rgba(255,255,255,0.05); color: var(--text-muted); }
+.points { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; margin-top: 0.5rem; font-size: 0.85rem; }
+.point { text-align: center; padding: 0.4rem; border-radius: 6px; }
+.point-buy { background: rgba(231,76,60,0.1); color: var(--red-up); }
+.point-stop { background: rgba(39,174,96,0.1); color: #27ae60; }
+.point-target { background: rgba(52,152,219,0.1); color: #3498db; }
+.point-label { font-size: 0.7rem; opacity: 0.7; }
+.point-value { font-weight: 700; font-size: 1rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h2>🔥 短线三把锁选股 <small style="color:var(--text-muted);font-size:0.85rem;font-weight:normal">资金锁+趋势锁+信号锁 三重验证 | 指南针风格买卖点</small></h2>
+
+<div class="period-tabs">
+    <div class="period-tab active" onclick="switchPeriod('T+3',this)">⚡ T+3 短线（3-5天）</div>
+    <div class="period-tab" onclick="switchPeriod('T+1',this)">🎯 T+1 超短（1-2天）</div>
+    <div class="period-tab" onclick="switchPeriod('波段',this)">📈 波段（1-2周）</div>
+    <div class="period-tab" onclick="switchPeriod('长线',this)">💎 长线（1-3月）</div>
+</div>
+
+<div id="market-bar" class="market-bar">📡 获取大盘数据...</div>
+
+<div style="margin-bottom:1rem;display:flex;gap:0.5rem;align-items:center">
+    <select id="pool-select" class="form-select" style="width:auto">
+        <option value="popular">🔥 热门池（76只）</option>
+        <option value="hs300">沪深300</option>
+        <option value="zz500">中证500</option>
+        <option value="sz50">上证50</option>
+    </select>
+    <input type="number" id="top-n" value="20" min="5" max="50" style="width:5rem" class="form-input">
+    <button class="btn btn-primary" onclick="startSurge()" style="padding:0.4rem 1.5rem;font-size:1rem">🔍 开始选股</button>
+</div>
+
+<div id="results-area">
+    <p style="color:var(--text-muted);text-align:center;padding:2rem">👆 选择操作周期，点击"开始选股"扫描三把锁信号</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentPeriod = 'T+3';
+
+function switchPeriod(p, tab) {
+    currentPeriod = p;
+    document.querySelectorAll('.period-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+}
+
+async function startSurge() {
+    const area = document.getElementById('results-area');
+    area.innerHTML = '<div class="loading-spinner"><div class="spinner"></div><span id="prog-text">初始化...</span></div><div class="progress-bar"><div class="fill" id="prog-fill" style="width:0%"></div></div>';
+
+    const pool = document.getElementById('pool-select').value;
+    const topN = document.getElementById('top-n').value;
+
+    try {
+        const resp = await fetch(`/api/screener/surge?pool=${pool}&top_n=${topN}&period=${encodeURIComponent(currentPeriod)}`);
+        const { task_id } = await resp.json();
+        let polled = 0;
+
+        const poll = setInterval(async () => {
+            polled++;
+            try {
+                const s = await fetch(`/api/screener/surge/status/${task_id}`);
+                const st = await s.json();
+                document.getElementById('prog-text').textContent = st.step || '';
+                document.getElementById('prog-fill').style.width = (st.progress || 0) + '%';
+
+                if (st.status === 'done') { clearInterval(poll); showResults(task_id); }
+                else if (st.status === 'error') { clearInterval(poll); area.innerHTML=`<div class="card" style="color:var(--red-up);text-align:center">❌ ${st.error||'选股失败'}</div>`; }
+                else if (polled > 120) { clearInterval(poll); area.innerHTML='<div class="card" style="color:var(--gold);text-align:center">⚠️ 超时</div>'; }
+            } catch(e) { clearInterval(poll); }
+        }, 1500);
+    } catch(e) {
+        area.innerHTML = `<div class="card" style="color:var(--red-up);text-align:center">❌ ${e.message}</div>`;
+    }
+}
+
+async function showResults(task_id) {
+    const resp = await fetch(`/api/screener/surge/results/${task_id}`);
+    const data = await resp.json();
+    const area = document.getElementById('results-area');
+
+    // 大盘状态
+    if (data.market) {
+        const m = data.market;
+        const emoji = {'强势':'🟢','偏强':'🟢','震荡':'🟡','偏弱':'🟠','弱势':'🔴'};
+        document.getElementById('market-bar').innerHTML = `
+            ${emoji[m.status]||'⚪'} <strong>大盘: ${m.status}</strong> | 热度${m.heat} | 涨跌比${m.up_down_ratio}%
+            | 涨停${m.limit_up}家 | 💰 仓位建议: <strong>${m.position_pct}%</strong> | ${m.advice}
+        `;
+    }
+
+    if (!data.results || data.results.length === 0) {
+        area.innerHTML = `<div class="card" style="text-align:center;color:var(--text-muted);padding:2rem">
+            <p style="font-size:1.5rem">🔍</p>
+            <p>当前没有${currentPeriod}周期三把锁信号</p>
+            <p style="font-size:0.85rem">可能原因：大盘偏弱、信号未共振、数据不足</p>
+            <p style="font-size:0.85rem">尝试切换周期（T+3或波段更容易触发）</p>
+        </div>`;
+        return;
+    }
+
+    const names = {'T+1':'超短1-2天','T+3':'短线3-5天','波段':'波段1-2周','长线':'价值1-3月'};
+    let html = `<p style="margin:0.5rem 0">✅ 找到 <strong>${data.total}</strong> 只${names[currentPeriod]||''}信号 | 三把锁三重验证</p>`;
+
+    data.results.forEach((s, i) => {
+        const lockOn = v => v >= 15;
+        const cl = v => lockOn(v) ? 'lock lock-on' : 'lock lock-off';
+        html += `
+        <div class="signal-card" onclick="location.href='/stock/${s.code}'" style="margin-bottom:0.75rem">
+            <div class="signal-header">
+                <div>
+                    <span class="signal-name">#${i+1} ${s.name}</span>
+                    <span class="signal-code">${s.code}</span>
+                </div>
+                <span class="signal-score">${s.total_score}/100</span>
+            </div>
+            <div class="locks">
+                <span class="${cl(s.capital_score)}">💰 资金锁 ${s.capital_score}/30</span>
+                <span class="${cl(s.trend_score)}">📈 趋势锁 ${s.trend_score}/30</span>
+                <span class="${cl(s.signal_score)}">✨ 信号锁 ${s.signal_score}/40</span>
+                <span style="font-size:0.8rem;color:var(--text-muted)">${s.confidence}信心 | 仓位${s.position_pct}% | ${s.hold_days}</span>
+            </div>
+            ${s.reasons && s.reasons.length ? `<div style="font-size:0.8rem;color:var(--text-muted);margin:0.3rem 0">${s.reasons.slice(0,4).join(' · ')}</div>` : ''}
+            <div class="points">
+                <div class="point point-buy"><div class="point-label">🟢 B 买入价</div><div class="point-value">${s.buy_price.toFixed(2)}</div></div>
+                <div class="point point-stop"><div class="point-label">🔴 止损价 ${s.stop_pct}%</div><div class="point-value">${s.stop_loss.toFixed(2)}</div></div>
+                <div class="point point-target"><div class="point-label">🎯 目标价 +${s.gain_pct}%</div><div class="point-value">${s.target_1.toFixed(2)}</div></div>
+            </div>
+        </div>`;
+    });
+
+    area.innerHTML = html;
+}
+</script>
+{% endblock %}

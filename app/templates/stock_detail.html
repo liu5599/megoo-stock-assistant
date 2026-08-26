@@ -1,0 +1,486 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} ({{ code }}) — 个股详情{% endblock %}
+{% block head %}
+<style>
+.stock-header {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+.stock-code { color: var(--text-muted); font-size: 0.9rem; }
+.chart-toolbar {
+    display: flex;
+    gap: 0.25rem;
+    margin-bottom: 0.5rem;
+    flex-wrap: wrap;
+}
+.chart-toolbar button {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    padding: 0.25rem 0.6rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.8rem;
+}
+.chart-toolbar button:hover, .chart-toolbar button.active {
+    color: var(--text-primary);
+    border-color: var(--accent);
+}
+.indicator-row {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.5rem;
+}
+.indicator-row label {
+    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    cursor: pointer;
+    color: var(--text-secondary);
+}
+.analysis-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 0.75rem;
+}
+.signal-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.3rem 0;
+    border-bottom: 1px solid rgba(48,54,61,0.3);
+    font-size: 0.85rem;
+}
+.signal-row:last-child { border-bottom: none; }
+.signal-label { color: var(--text-muted); }
+.factor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+@media (max-width: 700px) { .factor-grid { grid-template-columns: 1fr; } }
+.factor-group-box { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem; }
+.factor-group-box h4 { margin: 0 0 0.5rem; font-size: 0.85rem; }
+.factor-row { display: grid; grid-template-columns: 108px 1fr 44px 68px; gap: 0.5rem; align-items: center; font-size: 0.78rem; margin-bottom: 0.4rem; }
+.factor-name { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.factor-bar { height: 8px; background: var(--bg-secondary); border-radius: 4px; overflow: hidden; }
+.factor-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), #f0b90b); border-radius: 4px; }
+.factor-score { text-align: right; font-weight: 600; }
+.factor-raw { text-align: right; color: var(--text-muted); font-size: 0.72rem; }
+.factor-desc { grid-column: 1 / -1; font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.5rem; padding-left: 2px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="stock-header">
+    <h1>{{ name }}</h1>
+    <span class="stock-code">{{ code }}</span>
+    <button onclick="addToWatchlist('{{ code }}','{{ name }}')" style="margin-left:auto;background:var(--accent);color:#fff;border:none;padding:0.4rem 1rem;border-radius:6px;cursor:pointer;font-size:0.9rem">⭐ 加自选</button>
+</div>
+
+<!-- K线图表区 -->
+<div class="card">
+    <div class="chart-toolbar">
+        <button class="active" onclick="reloadKline(250, this)">1年</button>
+        <button onclick="reloadKline(120, this)">6月</button>
+        <button onclick="reloadKline(60, this)">3月</button>
+        <button onclick="reloadKline(20, this)">1月</button>
+    </div>
+    <div class="indicator-row">
+        <label><input type="checkbox" checked onchange="toggleMA(this)"> 均线</label>
+        <label><input type="checkbox" checked onchange="toggleMACD(this)"> MACD</label>
+        <label><input type="checkbox" checked onchange="toggleRSI(this)"> RSI</label>
+        <label><input type="checkbox" checked onchange="toggleKDJ(this)"> KDJ</label>
+    </div>
+    <div class="chart-container" style="height:400px;" id="main-chart-container">
+        <div class="loading-spinner"><div class="spinner"></div>加载K线数据...</div>
+    </div>
+    <div class="chart-container" style="height:160px;" id="macd-chart-container"></div>
+    <div class="chart-container" style="height:140px;" id="rsi-chart-container"></div>
+    <div class="chart-container" style="height:140px;" id="kdj-chart-container"></div>
+</div>
+
+<!-- 技术分析 + 基本面 -->
+<div class="analysis-grid" id="analysis-panels">
+    <div class="card">
+        <div class="card-header">🔧 技术分析</div>
+        <div class="loading-spinner"><div class="spinner"></div>加载中...</div>
+    </div>
+    <div class="card">
+        <div class="card-header">💰 基本面</div>
+        <div class="loading-spinner"><div class="spinner"></div>加载中...</div>
+    </div>
+</div>
+
+<!-- 指南针三把锁买卖点分析 -->
+<div class="card" style="margin-top:0.75rem">
+    <div class="card-header">🔐 三把锁买卖点分析（指南针风格）</div>
+    <div id="compass-panel" class="loading-spinner"><div class="spinner"></div>分析中...</div>
+</div>
+
+<!-- 因子分解（复用选股排名的截面结果） -->
+<div class="card" style="margin-top:0.75rem">
+    <div class="card-header">🧩 因子分解（选股模型）</div>
+    <div id="factor-panel" class="loading-spinner"><div class="spinner"></div>加载中...</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const CODE = "{{ code }}";
+let chartData = null;
+let mainChart = null, macdChart = null, rsiChart = null, kdjChart = null;
+let showMA = true, showMACD = true, showRSI = true, showKDJ = true;
+let currentDays = 250;
+
+// ===== 数据加载 =====
+async function reloadKline(days, btn) {
+    currentDays = days;
+    document.querySelectorAll('.chart-toolbar button').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+
+    document.getElementById('main-chart-container').innerHTML = '<div class="loading-spinner"><div class="spinner"></div>加载K线数据...</div>';
+    document.getElementById('macd-chart-container').innerHTML = '';
+    document.getElementById('rsi-chart-container').innerHTML = '';
+    document.getElementById('kdj-chart-container').innerHTML = '';
+
+    const resp = await fetch(`/api/stock/${CODE}/kline?days=${days}&indicators=ma,macd,rsi,kdj`);
+    chartData = await resp.json();
+
+    if (chartData.error) {
+        document.getElementById('main-chart-container').innerHTML = `<p style="color:var(--red-up)">${chartData.error}</p>`;
+        return;
+    }
+    renderAllCharts();
+}
+
+async function loadAnalysis() {
+    const resp = await fetch(`/api/stock/${CODE}`);
+    const data = await resp.json();
+    renderAnalysis(data);
+
+    // 加载K线
+    if (data.kline_available) {
+        reloadKline(250, document.querySelector('.chart-toolbar button'));
+    }
+
+    // 加载三把锁分析
+    loadCompass();
+
+    // 加载因子分解（复用选股排名的截面结果）
+    loadFactors();
+}
+
+async function loadFactors() {
+    const panel = document.getElementById('factor-panel');
+    const taskId = new URLSearchParams(window.location.search).get('task_id');
+    if (!taskId) {
+        panel.innerHTML = '<p style="color:var(--text-muted)">从「选股排名」点进个股可查看该股在选股模型下的因子分解</p>';
+        return;
+    }
+    try {
+        const resp = await fetch(`/api/ranking/results/${taskId}`);
+        const data = await resp.json();
+        if (data.status !== 'done' || !data.results) {
+            panel.innerHTML = '<p style="color:var(--text-muted)">选股任务结果已过期，请重新运行选股排名</p>';
+            return;
+        }
+        const row = data.results.find(r => r.code === CODE);
+        if (!row || !row.factors) {
+            panel.innerHTML = '<p style="color:var(--text-muted)">该股不在本次选股结果中，无因子分解数据</p>';
+            return;
+        }
+        panel.innerHTML = renderFactorPanel(row);
+    } catch (e) {
+        panel.innerHTML = '<p style="color:var(--text-muted)">因子分解加载失败</p>';
+    }
+}
+
+function renderFactorPanel(row) {
+    const facs = row.factors || {};
+    const tech = [], fund = [];
+    Object.entries(facs).forEach(([k, f]) => {
+        const dir = (f.direction != null && f.direction < 0) ? '↓反向' : '↑正向';
+        const scoreW = Math.min(100, Math.max(0, Number(f.score) || 0));
+        const rowHtml = `<div class="factor-row">
+            <div class="factor-name" title="${f.desc||''}">${f.label||k}</div>
+            <div class="factor-bar"><div class="factor-bar-fill" style="width:${scoreW}%"></div></div>
+            <div class="factor-score">${f.score != null ? f.score : '-'}</div>
+            <div class="factor-raw">${f.raw_text || '-'}<br><span style="color:var(--text-muted);font-size:0.68rem">${dir}</span></div>
+            <div class="factor-desc">${f.desc||''}</div>
+        </div>`;
+        (f.category === 'fund' ? fund : tech).push(rowHtml);
+    });
+    const box = (title, rows) => rows.length ? `<div class="factor-group-box"><h4>${title}</h4>${rows.join('')}</div>` : '';
+    return `<div class="factor-grid">${box('🔧 技术因子', tech)}${box('💰 基本面因子', fund)}</div>`;
+}
+
+async function loadCompass() {
+    try {
+        const resp = await fetch(`/api/stock/${CODE}/compass`);
+        const data = await resp.json();
+        renderCompass(data);
+    } catch(e) {
+        document.getElementById('compass-panel').innerHTML = '<p style="color:var(--text-muted)">三把锁分析暂不可用</p>';
+    }
+}
+
+function renderCompass(data) {
+    const panel = document.getElementById('compass-panel');
+    if (!data.signals || Object.keys(data.signals).length === 0) {
+        panel.innerHTML = '<p style="color:var(--text-muted)">当前无三把锁信号触发——三把锁未同时点亮</p>';
+        return;
+    }
+
+    const periods = ['T+1','T+3','波段','长线'];
+    const names = {'T+1':'超短1-2天','T+3':'短线3-5天','波段':'波段1-2周','长线':'价值1-3月'};
+    const lockEmoji = v => v >= 15 ? '🔒' : '🔓';
+
+    let html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0.75rem;margin-top:0.5rem">';
+
+    for (const p of periods) {
+        const s = data.signals[p];
+        if (!s) continue;
+
+        html += `<div style="background:var(--bg-secondary);border-radius:8px;padding:0.75rem;border:1px solid var(--border)">
+            <div style="font-weight:700;margin-bottom:0.5rem;color:var(--accent)">${names[p]} | 综合 ${s.total_score}/100</div>
+            <div style="display:flex;gap:1rem;margin-bottom:0.5rem;font-size:0.85rem">
+                <span>${lockEmoji(s.capital_score)} 资金 ${s.capital_score}/30</span>
+                <span>${lockEmoji(s.trend_score)} 趋势 ${s.trend_score}/30</span>
+                <span>${lockEmoji(s.signal_score)} 信号 ${s.signal_score}/40</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.3rem;font-size:0.85rem;margin-bottom:0.5rem">
+                <div>🟢 B买入: <strong>${s.buy_price.toFixed(2)}</strong></div>
+                <div>🔴 止损: <strong>${s.stop_loss.toFixed(2)}</strong> (${s.stop_pct}%)</div>
+                <div>🎯 目标: <strong>${s.target_1.toFixed(2)}</strong> (+${s.gain_pct}%)</div>
+                <div>📊 仓位: <strong>${s.position_pct}%</strong> | ${s.confidence}信心</div>
+            </div>
+            ${s.reasons && s.reasons.length ? `<div style="font-size:0.8rem;color:var(--text-muted)">${s.reasons.join(' · ')}</div>` : ''}
+        </div>`;
+    }
+
+    html += '</div>';
+    // 各周期锁状态总览
+    html += '<div style="margin-top:0.75rem;font-size:0.8rem;color:var(--text-muted)">';
+    html += '⏱️ 各周期三把锁状态：';
+    for (const p of periods) {
+        const r = data.raw ? data.raw[p] : null;
+        if (!r) continue;
+        const c = r.capital.score >= 15 ? '🟢' : '⚪';
+        const t = r.trend.score >= 15 ? '🟢' : '⚪';
+        const s = r.signal.score >= 20 ? '🟢' : '⚪';
+        html += ` <span style="margin:0 0.5rem">${names[p]}: ${c}资${t}趋${s}信(${r.total})</span>`;
+    }
+    html += '</div>';
+
+    panel.innerHTML = html;
+}
+
+// ===== 图表渲染（同步 innerHTML → getElementById，无需 setTimeout）=====
+function renderChart(containerId, canvasId, createFn) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = `<canvas id="${canvasId}"></canvas>`;
+    const canvas = document.getElementById(canvasId);
+    if (canvas) createFn(canvas);
+}
+
+function renderAllCharts() {
+    if (!chartData || !chartData.dates) return;
+
+    const dates = chartData.dates;
+    const ohlc = chartData.ohlc;
+    const ind = chartData.indicators || {};
+
+    // Prepare candlestick data for Chart.js financial plugin
+    const candlestickData = dates.map((d, i) => ({
+        x: new Date(d).getTime(),
+        o: ohlc.open[i],
+        h: ohlc.high[i],
+        l: ohlc.low[i],
+        c: ohlc.close[i],
+    })).filter(d => d.o != null);
+
+    // Destroy old charts
+    [mainChart, macdChart, rsiChart, kdjChart].forEach(c => { if (c) { c.destroy(); } });
+
+    // === Main Chart: Candlestick + MA + Volume ===
+    renderChart('main-chart-container', 'main-chart-canvas', canvas => {
+        const datasets = [{
+            type: 'candlestick',
+            label: 'K线',
+            data: candlestickData,
+            color: { up: '#e74c3c', down: '#27ae60', unchanged: '#8b949e' },
+            borderColor: { up: '#e74c3c', down: '#27ae60', unchanged: '#8b949e' },
+        }];
+
+        // MA overlay
+        if (showMA && ind.ma) {
+            const colors = { ma5: '#f0b90b', ma10: '#58a6ff', ma20: '#e74c3c', ma60: '#27ae60', ma120: '#9966ff' };
+            Object.entries(ind.ma).forEach(([key, vals]) => {
+                if (key in colors) {
+                    datasets.push({
+                        type: 'line', label: key.toUpperCase(), data: vals,
+                        borderColor: colors[key], borderWidth: 1, pointRadius: 0, fill: false,
+                    });
+                }
+            });
+        }
+
+        mainChart = new Chart(canvas, {
+            type: 'candlestick',
+            data: { datasets },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { position: 'top', labels: { boxWidth: 20, padding: 8 } } },
+                scales: {
+                    x: { type: 'time', time: { unit: 'day' }, grid: { display: false } },
+                    y: { position: 'right' },
+                },
+                interaction: { mode: 'index', intersect: false },
+            },
+        });
+    });
+
+    // === MACD Chart ===
+    if (showMACD && ind.macd) {
+        renderChart('macd-chart-container', 'macd-canvas', canvas => {
+            macdChart = new Chart(canvas, {
+                type: 'bar',
+                data: {
+                    labels: dates,
+                    datasets: [
+                        { type: 'bar', label: 'MACD柱', data: ind.macd.bar,
+                          backgroundColor: ctx => ctx.raw >= 0 ? 'rgba(231,76,60,0.5)' : 'rgba(39,174,96,0.5)' },
+                        { type: 'line', label: 'DIF', data: ind.macd.dif, borderColor: '#e74c3c', borderWidth: 1, pointRadius: 0 },
+                        { type: 'line', label: 'DEA', data: ind.macd.dea, borderColor: '#58a6ff', borderWidth: 1, pointRadius: 0 },
+                    ],
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: { x: { display: false }, y: { grid: { display: false } } },
+                },
+            });
+        });
+    }
+
+    // === RSI Chart ===
+    if (showRSI && ind.rsi) {
+        renderChart('rsi-chart-container', 'rsi-canvas', canvas => {
+            rsiChart = new Chart(canvas, {
+                type: 'line',
+                data: {
+                    labels: dates,
+                    datasets: [{
+                        label: 'RSI(14)', data: ind.rsi, borderColor: '#f0b90b', borderWidth: 1.5, pointRadius: 0,
+                        segment: { borderColor: ctx => ctx.p0.raw >= 70 ? '#e74c3c' : ctx.p0.raw <= 30 ? '#27ae60' : '#f0b90b' },
+                    }],
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { display: false },
+                        y: { min: 0, max: 100, grid: { display: false },
+                             ticks: { callback: v => [0, 30, 50, 70, 100].includes(v) ? v : '' } },
+                    },
+                },
+                plugins: [{
+                    id: 'rsiLines', afterDraw: chart => {
+                        const ctx = chart.ctx, yScale = chart.scales.y;
+                        [30, 50, 70].forEach(v => {
+                            const y = yScale.getPixelForValue(v);
+                            ctx.strokeStyle = v === 50 ? '#30363d' : v === 30 ? 'rgba(39,174,96,0.3)' : 'rgba(231,76,60,0.3)';
+                            ctx.beginPath(); ctx.moveTo(chart.scales.x.left, y); ctx.lineTo(chart.scales.x.right, y); ctx.stroke();
+                        });
+                    }
+                }],
+            });
+        });
+    }
+
+    // === KDJ Chart ===
+    if (showKDJ && ind.kdj) {
+        renderChart('kdj-chart-container', 'kdj-canvas', canvas => {
+            kdjChart = new Chart(canvas, {
+                type: 'line',
+                data: {
+                    labels: dates,
+                    datasets: [
+                        { label: 'K', data: ind.kdj.k, borderColor: '#58a6ff', borderWidth: 1, pointRadius: 0 },
+                        { label: 'D', data: ind.kdj.d, borderColor: '#f0b90b', borderWidth: 1, pointRadius: 0 },
+                        { label: 'J', data: ind.kdj.j, borderColor: '#e74c3c', borderWidth: 1, pointRadius: 0 },
+                    ],
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: { x: { display: false }, y: { min: 0, max: 100, grid: { display: false } } },
+                },
+            });
+        });
+    }
+}
+
+// ===== 分析面板 =====
+function renderAnalysis(data) {
+    const container = document.getElementById('analysis-panels');
+
+    let techHTML = '<div class="card"><div class="card-header">🔧 技术分析</div>';
+    if (data.technical && !data.technical.error) {
+        const t = data.technical;
+        techHTML += `<div class="signal-row"><span class="signal-label">趋势方向</span><span>${t.trend || '-'}</span></div>`;
+        techHTML += `<div class="signal-row"><span class="signal-label">趋势强度</span><span>${t.strength || '-'}</span></div>`;
+        techHTML += `<div class="signal-row"><span class="signal-label">MACD信号</span><span>${t.macd_signal || '-'}</span></div>`;
+        techHTML += `<div class="signal-row"><span class="signal-label">RSI(14)</span><span>${t.rsi_value != null ? formatScore(t.rsi_value) : '-'}</span></div>`;
+        techHTML += `<div class="signal-row"><span class="signal-label">KDJ信号</span><span>${t.kdj_signal || '-'}</span></div>`;
+        techHTML += `<div class="signal-row"><span class="signal-label">布林带</span><span>${t.bollinger_signal || '-'}</span></div>`;
+        techHTML += `<div class="signal-row"><span class="signal-label">量价信号</span><span>${t.volume_signal || '-'}</span></div>`;
+        if (t.ma5) techHTML += `<div class="signal-row"><span class="signal-label">MA5/MA20/MA60</span><span>${t.ma5} / ${t.ma20 || '-'} / ${t.ma60 || '-'}</span></div>`;
+        if (t.score != null) techHTML += `<div class="signal-row"><span class="signal-label">综合评分</span><span>${formatScore(t.score)}</span></div>`;
+    } else {
+        techHTML += '<p style="color:var(--text-muted)">暂无技术分析数据</p>';
+    }
+    techHTML += '</div>';
+
+    let fundHTML = '<div class="card"><div class="card-header">💰 基本面</div>';
+    if (data.financial) {
+        const f = data.financial;
+        if (f.pe != null) fundHTML += `<div class="signal-row"><span class="signal-label">市盈率(PE)</span><span>${f.pe != null ? f.pe.toFixed(1) : '-'}</span></div>`;
+        if (f.pb != null) fundHTML += `<div class="signal-row"><span class="signal-label">市净率(PB)</span><span>${f.pb != null ? f.pb.toFixed(1) : '-'}</span></div>`;
+        if (f.roe != null) fundHTML += `<div class="signal-row"><span class="signal-label">ROE</span><span>${f.roe != null ? f.roe.toFixed(1)+'%' : '-'}</span></div>`;
+        if (f.revenue_growth != null) fundHTML += `<div class="signal-row"><span class="signal-label">营收增长率</span><span>${f.revenue_growth != null ? f.revenue_growth.toFixed(1)+'%' : '-'}</span></div>`;
+        if (f.profit_growth != null) fundHTML += `<div class="signal-row"><span class="signal-label">利润增长率</span><span>${f.profit_growth != null ? f.profit_growth.toFixed(1)+'%' : '-'}</span></div>`;
+        if (f.gross_margin != null) fundHTML += `<div class="signal-row"><span class="signal-label">毛利率</span><span>${f.gross_margin != null ? f.gross_margin.toFixed(1)+'%' : '-'}</span></div>`;
+        if (f.debt_ratio != null) fundHTML += `<div class="signal-row"><span class="signal-label">资产负债率</span><span>${f.debt_ratio != null ? f.debt_ratio.toFixed(1)+'%' : '-'}</span></div>`;
+        if (f.total_market_cap != null) fundHTML += `<div class="signal-row"><span class="signal-label">总市值</span><span>${(f.total_market_cap/1e8).toFixed(0)}亿</span></div>`;
+    } else {
+        fundHTML += '<p style="color:var(--text-muted)">暂无财务数据</p>';
+    }
+    fundHTML += '</div>';
+
+    container.innerHTML = techHTML + fundHTML;
+}
+
+// ===== 切换控制 =====
+function toggleMA(cb) { showMA = cb.checked; renderAllCharts(); }
+function toggleMACD(cb) { showMACD = cb.checked; renderAllCharts(); }
+function toggleRSI(cb) { showRSI = cb.checked; renderAllCharts(); }
+function toggleKDJ(cb) { showKDJ = cb.checked; renderAllCharts(); }
+
+// ===== 加入自选 =====
+async function addToWatchlist(code, name) {
+    try {
+        const resp = await fetch(`/api/watchlist/add?codes=${code}&names=${name}`, {method:'POST'});
+        const data = await resp.json();
+        alert(`✅ ${name}(${code}) 已加入自选股`);
+    } catch(e) {
+        alert('添加失败');
+    }
+}
+
+// ===== 页面加载 =====
+document.addEventListener('DOMContentLoaded', loadAnalysis);
+</script>
+{% endblock %}

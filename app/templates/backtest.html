@@ -1,0 +1,285 @@
+{% extends "base.html" %}
+{% block title %}策略回测 — megoo股票助手{% endblock %}
+{% block head %}
+<style>
+.bt-layout { display: grid; grid-template-columns: 340px 1fr; gap: 1rem; }
+@media (max-width: 900px) { .bt-layout { grid-template-columns: 1fr; } }
+.bt-panel { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; }
+.strategy-card { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem; margin-bottom: 0.5rem; }
+.strategy-card .st-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem; }
+.metric-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; margin: 0.75rem 0; }
+.metric-box { background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; padding: 0.5rem; text-align: center; }
+.metric-box .m-label { font-size: 0.68rem; color: var(--text-muted); }
+.metric-box .m-value { font-size: 1.1rem; font-weight: 700; }
+.compare-legend { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+.compare-legend .legend-item { display: flex; align-items: center; gap: 0.25rem; font-size: 0.8rem; }
+.compare-legend .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+.compact { font-size: 0.78rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1 style="margin-bottom:0.75rem;">📈 策略回测对比</h1>
+
+<div class="bt-layout">
+    <!-- 配置面板 -->
+    <div>
+        <div class="bt-panel">
+            <h3 style="margin-bottom:0.5rem;">⚙️ 回测参数</h3>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label">开始</label><input type="text" class="form-input" id="bt-start" value="2025-01-01"></div>
+                <div class="form-group"><label class="form-label">结束</label><input type="text" class="form-input" id="bt-end" value="2026-06-25"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label">股票池</label><select class="form-select" id="bt-pool"><option value="popular">热门股票</option><option value="hs300">沪深300</option></select></div>
+                <div class="form-group"><label class="form-label">调仓</label><select class="form-select" id="bt-freq"><option value="monthly" selected>月</option><option value="weekly">周</option></select></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label">持仓数</label><input type="number" class="form-input" id="bt-pos" value="20" min="5" max="50"></div>
+                <div class="form-group"><label class="form-label">初始资金</label><input type="number" class="form-input" id="bt-cap" value="1000000" step="100000"></div>
+            </div>
+
+            <h4 style="margin-top:0.75rem;margin-bottom:0.5rem;">📋 策略配置</h4>
+            <div id="strategies-container">
+                <!-- Strategy 1 -->
+                <div class="strategy-card" data-id="1">
+                    <div class="st-header">
+                        <strong>策略 1</strong>
+                        <span class="legend-dot" style="background:#e74c3c;display:inline-block;width:10px;height:10px;border-radius:50%;"></span>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label class="form-label">技术权重</label><input type="number" class="form-input s-tech" value="0.40" step="0.05" min="0" max="1"></div>
+                        <div class="form-group"><label class="form-label">基本面权重</label><input type="number" class="form-input s-fund" value="0.60" step="0.05" min="0" max="1"></div>
+                    </div>
+                </div>
+                <!-- Strategy 2 -->
+                <div class="strategy-card" data-id="2">
+                    <div class="st-header">
+                        <strong>策略 2</strong>
+                        <span class="legend-dot" style="background:#58a6ff;display:inline-block;width:10px;height:10px;border-radius:50%;"></span>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label class="form-label">技术权重</label><input type="number" class="form-input s-tech" value="0.60" step="0.05" min="0" max="1"></div>
+                        <div class="form-group"><label class="form-label">基本面权重</label><input type="number" class="form-input s-fund" value="0.40" step="0.05" min="0" max="1"></div>
+                    </div>
+                </div>
+                <!-- Strategy 3 -->
+                <div class="strategy-card" data-id="3">
+                    <div class="st-header">
+                        <strong>策略 3（纯技术面）</strong>
+                        <span class="legend-dot" style="background:#f0b90b;display:inline-block;width:10px;height:10px;border-radius:50%;"></span>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label class="form-label">技术权重</label><input type="number" class="form-input s-tech" value="1.00" step="0.05" min="0" max="1"></div>
+                        <div class="form-group"><label class="form-label">基本面权重</label><input type="number" class="form-input s-fund" value="0.00" step="0.05" min="0" max="1"></div>
+                    </div>
+                </div>
+            </div>
+
+            <button class="btn btn-primary" onclick="runBacktest()" id="bt-btn" style="width:100%;justify-content:center;margin-top:0.75rem;">
+                🚀 并行回测
+            </button>
+            <p style="font-size:0.7rem;color:var(--text-muted);margin-top:0.5rem;">⚠️ 回测耗时较长（2-5分钟），请耐心等待</p>
+        </div>
+    </div>
+
+    <!-- 结果区 -->
+    <div id="bt-results">
+        <div style="text-align:center;padding:3rem;color:var(--text-muted);">
+            <p style="font-size:3rem;">📈</p>
+            <p>配置1-3套策略，点击「并行回测」</p>
+            <p style="font-size:0.8rem;">多因子事件驱动回测 | 等权重调仓 | 含手续费(万三)和滑点(千一)</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function runBacktest() {
+    const btn = document.getElementById('bt-btn');
+    btn.disabled = true; btn.textContent = '⏳ 回测中...';
+
+    const baseParams = {
+        start_date: document.getElementById('bt-start').value.replace(/-/g, ''),
+        end_date: document.getElementById('bt-end').value.replace(/-/g, ''),
+        pool: document.getElementById('bt-pool').value,
+        rebalance_freq: document.getElementById('bt-freq').value,
+        max_positions: document.getElementById('bt-pos').value,
+        initial_capital: document.getElementById('bt-cap').value,
+    };
+
+    // Collect all strategies
+    const cards = document.querySelectorAll('.strategy-card');
+    const strategies = [];
+    cards.forEach(card => {
+        strategies.push({
+            id: card.dataset.id,
+            tech_w: parseFloat(card.querySelector('.s-tech').value) || 0,
+            fund_w: parseFloat(card.querySelector('.s-fund').value) || 0,
+        });
+    });
+
+    const container = document.getElementById('bt-results');
+    container.innerHTML = '<div class="loading-spinner"><div class="spinner"></div><span id="bt-prog">初始化...</span></div><div class="progress-bar"><div class="fill" id="bt-fill" style="width:0%"></div></div>';
+
+    // 并行启动所有回测
+    const taskIds = [];
+    for (const s of strategies) {
+        const params = new URLSearchParams({...baseParams, tech_weight: s.tech_w, fund_weight: s.fund_w});
+        try {
+            const resp = await fetch('/api/backtest/run', {method:'POST', body:params});
+            const {task_id} = await resp.json();
+            taskIds.push({id: s.id, task_id, config: s});
+        } catch(e) { console.error(e); }
+    }
+
+    if (taskIds.length === 0) {
+        container.innerHTML = '<div class="card" style="color:var(--red-up)">❌ 所有策略启动失败</div>';
+        return;
+    }
+
+    // 轮询所有任务
+    let elapsed = 0;
+    const poll = setInterval(async () => {
+        elapsed += 2;
+        let allDone = true;
+        let anyError = false;
+        let errMsg = '';
+
+        for (const t of taskIds) {
+            if (t.done) continue;
+            try {
+                const s = await fetch(`/api/backtest/status/${t.task_id}`);
+                const st = await s.json();
+                document.getElementById('bt-prog').textContent = st.step || '计算中...';
+                document.getElementById('bt-fill').style.width = Math.max(0, (st.progress||0) - 5) + '%';
+
+                if (st.status === 'done') t.done = true;
+                else if (st.status === 'error') { t.done = true; t.error = st.error; anyError = true; errMsg = st.error; }
+                else allDone = false;
+            } catch(e) { t.done = true; t.error = e.message; anyError = true; }
+        }
+
+        if (allDone) {
+            clearInterval(poll);
+            if (anyError && taskIds.every(t=>t.error)) {
+                container.innerHTML = `<div class="card" style="color:var(--red-up)">❌ ${errMsg}</div>`;
+            } else {
+                showResults(taskIds);
+            }
+        } else if (elapsed > 300) {
+            clearInterval(poll);
+            container.innerHTML = '<div class="card" style="color:var(--gold)">⚠️ 回测超时，部分结果可能未完成</div>';
+            showResults(taskIds);
+        }
+    }, 2000);
+}
+
+async function showResults(taskIds) {
+    const container = document.getElementById('bt-results');
+    const colors = ['#e74c3c', '#58a6ff', '#f0b90b'];
+    let html = '';
+
+    // 获取所有结果
+    const results = [];
+    for (const t of taskIds) {
+        if (t.error) continue;
+        try {
+            const resp = await fetch(`/api/backtest/result/${t.task_id}`);
+            const data = await resp.json();
+            if (data.status === 'done') results.push({...data, color: colors[parseInt(t.id)-1], label: `策略${t.id}`, config: t.config});
+        } catch(e) {}
+    }
+
+    if (results.length === 0) {
+        container.innerHTML = '<div class="card">无有效回测结果</div>';
+        return;
+    }
+
+    // 指标对比表
+    html += '<div class="card"><table class="data-table compact"><thead><tr><th>指标</th>';
+    results.forEach(r => html += `<th style="color:${r.color}">${r.label} (技${(r.config.tech_w*100).toFixed(0)}%/基${(r.config.fund_w*100).toFixed(0)}%)</th>`);
+    html += '</tr></thead><tbody>';
+
+    const metrics = [
+        ['总收益(%)', 'total_return', '+'],
+        ['年化收益(%)', 'annual_return', '+'],
+        ['夏普比率', 'sharpe_ratio', ''],
+        ['最大回撤(%)', 'max_drawdown', '-'],
+        ['胜率(%)', 'win_rate', '+'],
+        ['超额收益(%)', 'excess_return', '+'],
+        ['年化波动(%)', 'annual_volatility', '-'],
+        ['信息比率', 'information_ratio', '+'],
+    ];
+
+    metrics.forEach(([label, key, better]) => {
+        html += `<tr><td>${label}</td>`;
+        // Find best value
+        let bestVal = null;
+        if (better === '+') bestVal = Math.max(...results.map(r => r.metrics?.[key] ?? -Infinity));
+        else if (better === '-') bestVal = Math.min(...results.map(r => r.metrics?.[key] ?? Infinity));
+
+        results.forEach(r => {
+            const val = r.metrics?.[key];
+            const isBest = val != null && val === bestVal;
+            html += `<td style="${isBest ? 'font-weight:700;' : ''}">${val != null ? val : '-'}${isBest ? ' ⭐' : ''}</td>`;
+        });
+        html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+
+    // 叠加净值曲线图
+    html += '<div class="chart-container" style="height:350px;"><canvas id="bt-compare-chart"></canvas></div>';
+
+    container.innerHTML = html;
+
+    // 渲染叠加图表
+    setTimeout(() => {
+        const ctx = document.getElementById('bt-compare-chart');
+        if (!ctx) return;
+
+        const datasets = [];
+        let labels = [];
+
+        results.forEach(r => {
+            const nav = r.nav_data;
+            if (nav?.dates && nav?.strategy_nav) {
+                if (labels.length === 0) labels = nav.dates;
+                datasets.push({
+                    label: `${r.label} (${r.config.tech_w*100|0}/${r.config.fund_w*100|0})`,
+                    data: nav.strategy_nav,
+                    borderColor: r.color,
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    fill: false,
+                });
+            }
+            // 添加基准
+            if (nav?.benchmark_nav && nav.benchmark_nav.length > 0 && datasets.findIndex(d=>d.label==='沪深300')<0) {
+                datasets.push({
+                    label: '沪深300',
+                    data: nav.benchmark_nav,
+                    borderColor: '#8b949e',
+                    borderWidth: 1.5,
+                    borderDash: [5,5],
+                    pointRadius: 0,
+                    fill: false,
+                });
+            }
+        });
+
+        new Chart(ctx, {
+            type: 'line',
+            data: { labels, datasets },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { position: 'top' } },
+                scales: { x: { grid: { display: false }, ticks: { maxTicksLimit: 10 } }, y: { grid: { display: false } } },
+                interaction: { mode: 'index', intersect: false },
+            },
+        });
+    }, 300);
+}
+</script>
+{% endblock %}

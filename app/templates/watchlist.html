@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+{% block title %}自选股 — megoo股票助手{% endblock %}
+{% block head %}
+<style>
+.wl-controls {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    align-items: flex-end;
+}
+.wl-add-group {
+    display: flex;
+    gap: 0.5rem;
+    align-items: flex-end;
+    flex: 1;
+}
+.code-input {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 0.45rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    width: 250px;
+    outline: none;
+}
+.code-input:focus { border-color: var(--accent); }
+.wl-table td { padding: 0.6rem 0.75rem; }
+.wl-table .price  { text-align: right; font-variant-numeric: tabular-nums; }
+.wl-table .pct   { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+.wl-table .code  { cursor: pointer; color: var(--accent); }
+.wl-table .code:hover { text-decoration: underline; }
+.wl-table .btn-remove {
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 1.1rem;
+    transition: color 0.15s;
+}
+.wl-table .btn-remove:hover { color: var(--red-up); }
+.empty-state {
+    text-align: center;
+    padding: 3rem;
+    color: var(--text-muted);
+}
+.quick-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<h1 style="margin-bottom: 1rem;">⭐ 自选股管理</h1>
+
+<!-- 控制栏 -->
+<div class="wl-controls">
+    <div class="wl-add-group">
+        <div style="flex:1">
+            <label class="form-label">添加股票（输入代码或名称）</label>
+            <input type="text" class="code-input" id="wl-input"
+                   placeholder="输入代码如 000001,600519 或名称..."
+                   oninput="searchStocks(this.value)" autocomplete="off">
+            <div id="wl-search-dropdown" class="search-dropdown"></div>
+        </div>
+        <button class="btn btn-primary" onclick="addSelected()" id="wl-add-btn">➕ 添加</button>
+    </div>
+    <div style="display:flex;gap:0.25rem;">
+        <button class="btn btn-secondary btn-sm" onclick="exportWL()">📥 导出</button>
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('wl-import').click()">📤 导入</button>
+        <input type="file" id="wl-import" accept=".json" style="display:none" onchange="importWL(this)">
+    </div>
+</div>
+
+<!-- 自选股列表 -->
+<div id="wl-content">
+    <div class="loading-spinner"><div class="spinner"></div>加载自选股...</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let selectedCode = null;
+let selectedName = null;
+let debounceTimer;
+
+// ===== 加载自选股 =====
+async function loadWatchlist() {
+    const container = document.getElementById('wl-content');
+    try {
+        const resp = await fetch('/api/watchlist');
+        const data = await resp.json();
+
+        if (!data.stocks || data.stocks.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <p style="font-size:3rem;">⭐</p>
+                    <p>自选股列表为空</p>
+                    <p style="font-size:0.8rem;">在上方输入框搜索并添加你关注的股票</p>
+                </div>`;
+            return;
+        }
+
+        let html = `<div class="card"><table class="data-table wl-table">
+            <thead><tr>
+                <th>代码</th><th>名称</th><th style="text-align:right">最新价</th>
+                <th style="text-align:right">涨跌幅</th><th style="text-align:right">昨收</th><th>操作</th>
+            </tr></thead><tbody>`;
+
+        data.stocks.forEach(s => {
+            const q = s.quote || {};
+            const price = q.price != null ? q.price.toFixed(2) : '--';
+            const pct = q.change_pct != null ? q.change_pct.toFixed(2) + '%' : '--';
+            const pre = q.pre_close != null ? q.pre_close.toFixed(2) : '--';
+            const pctClass = q.change_pct != null ? (q.change_pct >= 0 ? 'up' : 'down') : '';
+
+            html += `<tr>
+                <td class="code" onclick="location.href='/stock/${s.code}'">${s.code}</td>
+                <td>${s.name || '-'}</td>
+                <td class="price">${price}</td>
+                <td class="pct ${pctClass}">${pct}</td>
+                <td class="price">${pre}</td>
+                <td><span class="btn-remove" onclick="removeFromWL('${s.code}')" title="移除">✕</span></td>
+            </tr>`;
+        });
+
+        html += `</tbody></table></div>`;
+
+        // 快捷操作
+        html += `<div class="quick-actions">
+            <span style="color:var(--text-muted);font-size:0.8rem;">共 ${data.count} 只</span>
+            <button class="btn btn-secondary btn-sm" onclick="location.href='/ranking'">📊 去排名</button>
+        </div>`;
+
+        container.innerHTML = html;
+    } catch(e) {
+        container.innerHTML = `<div class="card" style="color:var(--red-up)">❌ 加载失败: ${e.message}</div>`;
+    }
+}
+
+// ===== 搜索 =====
+async function searchStocks(val) {
+    clearTimeout(debounceTimer);
+    const dropdown = document.getElementById('wl-search-dropdown');
+    if (val.length < 2) {
+        dropdown.classList.remove('show');
+        return;
+    }
+    debounceTimer = setTimeout(async () => {
+        try {
+            const resp = await fetch(`${window.SEARCH_API_URL}?q=${encodeURIComponent(val)}`);
+            const data = await resp.json();
+            if (data.stocks && data.stocks.length > 0) {
+                dropdown.innerHTML = data.stocks.map(s =>
+                    `<div class="search-result-item" onclick="selectStock('${s.code}','${s.name}')">
+                        <span><span class="code">${s.code}</span> ${s.name}</span>
+                        <span style="color:var(--text-muted)">${s.sector||''}</span>
+                    </div>`
+                ).join('');
+                dropdown.classList.add('show');
+            } else {
+                dropdown.innerHTML = '<div class="search-result-item" style="color:var(--text-muted)">未找到</div>';
+                dropdown.classList.add('show');
+            }
+        } catch(e) {}
+    }, 300);
+}
+
+function selectStock(code, name) {
+    selectedCode = code;
+    selectedName = name;
+    document.getElementById('wl-input').value = `${code} ${name}`;
+    document.getElementById('wl-search-dropdown').classList.remove('show');
+}
+
+// ===== 添加/移除 =====
+async function addSelected() {
+    const input = document.getElementById('wl-input');
+    let code = selectedCode;
+    let name = selectedName;
+    if (!code) {
+        // 尝试从输入提取代码
+        const match = input.value.match(/(\d{6})/);
+        if (!match) { alert('请先搜索并选择一只股票'); return; }
+        code = match[1];
+    }
+
+    try {
+        // 将名称一同传给后端，避免后端重新查询失败
+        const params = new URLSearchParams();
+        params.set('codes', code);
+        if (name) params.set('names', name);
+        const resp = await fetch(`/api/watchlist/add?${params.toString()}`, { method: 'POST' });
+        const data = await resp.json();
+        input.value = '';
+        selectedCode = null;
+        selectedName = null;
+        document.getElementById('wl-search-dropdown').classList.remove('show');
+        loadWatchlist();
+    } catch(e) {
+        alert('添加失败: ' + e.message);
+    }
+}
+
+async function removeFromWL(code) {
+    if (!confirm(`确定要移除 ${code} 吗？`)) return;
+    try {
+        await fetch(`/api/watchlist/remove?codes=${code}`, { method: 'POST' });
+        loadWatchlist();
+    } catch(e) {
+        alert('移除失败: ' + e.message);
+    }
+}
+
+// ===== 导入/导出 =====
+async function exportWL() {
+    window.location.href = '/api/watchlist/export';
+}
+
+async function importWL(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const form = new FormData();
+    form.append('file', file);
+    try {
+        const resp = await fetch('/api/watchlist/import', { method: 'POST', body: form });
+        const data = await resp.json();
+        loadWatchlist();
+    } catch(e) {
+        alert('导入失败: ' + e.message);
+    }
+}
+
+// ===== 回车添加 =====
+document.addEventListener('keydown', function(e) {
+    const input = document.getElementById('wl-input');
+    if (e.target === input && e.key === 'Enter') {
+        e.preventDefault();
+        addSelected();
+    }
+});
+
+// ===== 页面初始化 =====
+document.addEventListener('DOMContentLoaded', loadWatchlist);
+</script>
+{% endblock %}

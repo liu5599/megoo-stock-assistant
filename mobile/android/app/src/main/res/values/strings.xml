@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">megoo操盘助手</string>
+    <string name="title_activity_main">megoo操盘助手</string>
+    <string name="package_name">com.megoo.stock</string>
+    <string name="custom_url_scheme">com.megoo.stock</string>
+</resources>

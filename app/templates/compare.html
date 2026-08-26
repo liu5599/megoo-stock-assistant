@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+{% block title %}股票对比 — megoo股票助手{% endblock %}
+{% block head %}
+<style>
+.compare-inputs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+.stock-pick {
+    flex: 1;
+    min-width: 150px;
+}
+.compare-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+.compare-chart-container {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem;
+}
+.compare-table td, .compare-table th {
+    text-align: center;
+    font-size: 0.82rem;
+}
+.compare-table td:first-child, .compare-table th:first-child {
+    text-align: left;
+    color: var(--text-muted);
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<h1 style="margin-bottom:0.75rem;">⚖️ 股票对比分析</h1>
+
+<div class="compare-inputs">
+    <div class="stock-pick">
+        <label class="form-label">股票 1</label>
+        <input type="text" class="code-input" id="cp1" value="600519" placeholder="代码">
+    </div>
+    <div class="stock-pick">
+        <label class="form-label">股票 2</label>
+        <input type="text" class="code-input" id="cp2" value="000858" placeholder="代码">
+    </div>
+    <div class="stock-pick">
+        <label class="form-label">股票 3</label>
+        <input type="text" class="code-input" id="cp3" placeholder="代码（可选）">
+    </div>
+    <div class="stock-pick">
+        <label class="form-label">股票 4</label>
+        <input type="text" class="code-input" id="cp4" placeholder="代码（可选）">
+    </div>
+    <div style="display:flex;align-items:flex-end;">
+        <button class="btn btn-primary" onclick="runCompare()">⚖️ 开始对比</button>
+    </div>
+</div>
+
+<!-- 对比结果 -->
+<div id="compare-results">
+    <div style="text-align:center;padding:3rem;color:var(--text-muted);">
+        <p style="font-size:3rem;">⚖️</p>
+        <p>输入2-4只股票代码，点击「开始对比」</p>
+        <p style="font-size:0.8rem;">支持并排K线叠加、技术指标、基本面表格对比</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function runCompare() {
+    const codes = [];
+    for (let i = 1; i <= 4; i++) {
+        const v = document.getElementById('cp'+i).value.trim();
+        if (v) codes.push(v);
+    }
+    if (codes.length < 2) { alert('请至少输入2只股票代码'); return; }
+
+    const container = document.getElementById('compare-results');
+    container.innerHTML = '<div class="loading-spinner"><div class="spinner"></div>获取数据中...</div>';
+
+    try {
+        // 并行获取所有股票数据
+        const promises = codes.map(code =>
+            Promise.all([
+                fetch(`/api/stock/${code}`).then(r=>r.json()),
+                fetch(`/api/stock/${code}/kline?days=120&indicators=ma`).then(r=>r.json()),
+            ]).then(([analysis, kline]) => ({code, analysis, kline}))
+        );
+
+        const results = await Promise.all(promises);
+
+        // 构建基本面对比表
+        let html = '<div class="card"><table class="data-table compare-table"><thead><tr><th>指标</th>';
+        results.forEach(r => html += `<th>${r.analysis.name||r.code}<br><span style="font-weight:normal;font-size:0.7rem;color:var(--text-muted)">${r.code}</span></th>`);
+        html += '</tr></thead><tbody>';
+
+        const metrics = [
+            ['最新价', r => r.analysis.latest_close?.toFixed(2) || '-'],
+            ['PE', r => r.analysis.financial?.pe?.toFixed(1) || '-'],
+            ['PB', r => r.analysis.financial?.pb?.toFixed(1) || '-'],
+            ['ROE', r => (r.analysis.financial?.roe?.toFixed(1)||'-') + '%'],
+            ['营收增长率', r => (r.analysis.financial?.revenue_growth?.toFixed(1)||'-') + '%'],
+            ['利润增长率', r => (r.analysis.financial?.profit_growth?.toFixed(1)||'-') + '%'],
+            ['毛利率', r => (r.analysis.financial?.gross_margin?.toFixed(1)||'-') + '%'],
+            ['资产负债率', r => (r.analysis.financial?.debt_ratio?.toFixed(1)||'-') + '%'],
+            ['总市值(亿)', r => r.analysis.financial?.total_market_cap ? (r.analysis.financial.total_market_cap/1e8).toFixed(0) : '-'],
+            ['数据点数', r => r.kline?.dates?.length || 0],
+        ];
+
+        metrics.forEach(([label, fn]) => {
+            html += `<tr><td>${label}</td>`;
+            results.forEach(r => {
+                const val = fn(r);
+                html += `<td>${val}</td>`;
+            });
+            html += '</tr>';
+        });
+
+        html += '</tbody></table></div>';
+
+        // 技术指标对比
+        html += '<div class="card"><table class="data-table compare-table"><thead><tr><th>技术信号</th>';
+        results.forEach(r => html += `<th>${r.code}</th>`);
+        html += '</tr></thead><tbody>';
+
+        const techs = ['trend','macd_signal','rsi_signal','kdj_signal','bollinger_signal','volume_signal'];
+        techs.forEach(key => {
+            html += `<tr><td>${key}</td>`;
+            results.forEach(r => {
+                const t = r.analysis.technical || {};
+                html += `<td>${t[key]||'-'}</td>`;
+            });
+            html += '</tr>';
+        });
+        html += '</tbody></table></div>';
+
+        // K线叠加图
+        html += '<div class="chart-container" style="height:350px;"><canvas id="compare-chart"></canvas></div>';
+
+        container.innerHTML = html;
+
+        // 绘制叠加K线收盘价对比图
+        setTimeout(() => {
+            const ctx = document.getElementById('compare-chart');
+            if (!ctx) return;
+
+            const colors = ['#e74c3c', '#58a6ff', '#f0b90b', '#27ae60'];
+            const datasets = [];
+            let maxLen = 0;
+
+            results.forEach((r, i) => {
+                const labels = r.kline.dates || [];
+                const closes = r.kline.ohlc?.close || [];
+                maxLen = Math.max(maxLen, labels.length);
+
+                // 归一化为累计收益率（以第一个数据点为基准）
+                const base = closes[0] || 1;
+                const returns = closes.map(c => ((c - base) / base * 100));
+
+                datasets.push({
+                    label: `${r.code} ${r.analysis.name||''}`,
+                    data: returns,
+                    borderColor: colors[i],
+                    backgroundColor: colors[i] + '20',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    fill: false,
+                });
+            });
+
+            new Chart(ctx, {
+                type: 'line',
+                data: { labels: results[0]?.kline.dates || [], datasets },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'top' },
+                        tooltip: { mode: 'index', intersect: false },
+                    },
+                    scales: {
+                        x: { grid: { display: false }, ticks: { maxTicksLimit: 10 } },
+                        y: { title: { display: true, text: '累计收益率(%)' }, grid: { display: false } },
+                    },
+                },
+            });
+        }, 200);
+
+    } catch(e) {
+        container.innerHTML = `<div class="card" style="color:var(--red-up)">❌ 对比失败: ${e.message}</div>`;
+    }
+}
+
+// 回车启动对比
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && document.activeElement?.id?.startsWith('cp')) {
+        runCompare();
+    }
+});
+</script>
+{% endblock %}
