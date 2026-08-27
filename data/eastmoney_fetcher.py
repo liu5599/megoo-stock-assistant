@@ -161,6 +161,8 @@ class EastMoneyFetcher(DataFetcher):
             # 东财历史K线接口被风控/断连时，熔断并降级到腾讯K线
             EastMoneyFetcher._push2his_blocked = True
             logger.info("🔌 东财历史K线接口熔断，后续直接走腾讯K线")
+            from utils.logger import log_event
+            log_event("数据源熔断", source="eastmoney_kline", action="OPEN", fallback="腾讯K线")
             return self._get_kline_from_tencent(code, period, start_date, end_date, adjust)
 
         rows = []

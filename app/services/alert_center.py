@@ -62,9 +62,13 @@ def send_alert(title: str, content: str, level: str = "P1", event_key: str = "")
             logger.info(f"告警已发送: [{level}] {title}")
         else:
             logger.warning(f"告警发送失败: {resp.text[:100]}")
+            from utils.logger import log_event
+            log_event("告警", level=level, status="FAIL", msg=resp.text[:100])
         return ok
     except Exception as e:
         logger.warning(f"告警发送异常: {e}")
+        from utils.logger import log_event
+        log_event("告警", level=level, status="ERROR", msg=str(e))
         return False
 
 

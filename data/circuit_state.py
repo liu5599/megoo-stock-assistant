@@ -51,6 +51,8 @@ def set_open(source: str):
     with _lock:
         _state[source] = {"open": True, "opened_at": time.time()}
         _save()
+    from utils.logger import log_event
+    log_event("数据源熔断", source=source, action="OPEN")
 
 
 def set_closed(source: str):
@@ -58,6 +60,8 @@ def set_closed(source: str):
     with _lock:
         _state.pop(source, None)
         _save()
+    from utils.logger import log_event
+    log_event("数据源熔断", source=source, action="CLOSE")
 
 
 def is_open(source: str) -> bool:

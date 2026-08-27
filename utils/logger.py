@@ -47,5 +47,13 @@ def setup_logger(level: str = "INFO", log_file: str = "megoo.log"):
     return logger
 
 
+def log_event(event_type: str, **fields):
+    """结构化关键事件日志（统一格式，便于 grep 与 cron 解析）：
+    [EVENT] type=数据源熔断 source=东财直连 action=OPEN
+    """
+    detail = " ".join(f"{k}={v}" for k, v in fields.items())
+    logger.info(f"[EVENT] type={event_type} {detail}")
+
+
 # 默认初始化（INFO级别）
 setup_logger()
