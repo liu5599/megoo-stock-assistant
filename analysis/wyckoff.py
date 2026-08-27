@@ -26,14 +26,17 @@ from utils.logger import logger
 class WyckoffAnalyzer:
     """威科夫吸筹分析器"""
 
-    def __init__(self, lookback: int = 120, zone_percentile: float = 0.65):
+    def __init__(self, lookback: int = 120, zone_percentile: float = 0.65,
+                 spring_wick_pct: float = 0.08):
         """
         Args:
             lookback: 分析窗口（交易日）
             zone_percentile: 区间定义分位数（0.65=中65%区域）
+            spring_wick_pct: Spring 刺破深度上限（跌破下沿 ≤ 8% 才算插针，防趋势破位误报）
         """
         self.lookback = lookback
         self.zone_percentile = zone_percentile
+        self.spring_wick_pct = spring_wick_pct
 
     def analyze(self, df: pd.DataFrame) -> Dict:
         """完整威科夫分析"""
@@ -57,7 +60,8 @@ class WyckoffAnalyzer:
 
         # ---- 1. 吸筹区间识别 ----
         zone_high = float(w_close.quantile(1 - (1 - self.zone_percentile) / 2))
-        zone_low = float(w_close.quantile((1 - self.zone_percentile) / 2))
+        # 下沿按 low 分布定义（真实支撑位）——用 close 分位会让 low 天天"跌破"下沿导致 Spring 泛滥
+        zone_low = float(w_low.quantile((1 - self.zone_percentile) / 2))
         range_pct = (zone_high - zone_low) / zone_low * 100
 
         # 横盘判定：区间内波动收窄（近30日振幅 vs 前90日）
@@ -84,21 +88,32 @@ class WyckoffAnalyzer:
         if pos_in_zone < 0.4:
             accumulation_score += 10
 
-        # ---- 2. Spring 检测（最近5日跌破下沿后收回） ----
+        # ---- 趋势过滤（v3.1 降噪）：明确下跌趋势中 Spring/SOS 无效 ----
+        # 下跌趋势(短期均线在长期下方 且 长期均线仍在下行)的破位反抽是趋势延续，不是洗盘；
+        # 横盘/上升中继的插针才算 Spring。双重确认避免短期回调误判趋势反转
+        ma20 = float(close.tail(20).mean()) if len(close) >= 20 else price
+        ma60 = float(close.tail(60).mean()) if len(close) >= 60 else ma20
+        ma60_prev = float(close.tail(90).head(30).mean()) if len(close) >= 90 else ma60
+        downtrend = ma20 < ma60 and ma60 < ma60_prev * 0.995
+
+        # ---- 2. Spring 检测（最近5日跌破下沿后收回，需非下跌趋势 + 刺破有限） ----
         spring_signal = False
         spring_note = ""
-        for i in range(max(5, len(close) - 5), len(close)):
-            if float(low.iloc[i]) < zone_low:
-                # 跌破后 N 日内收回
-                if price > zone_low:
+        if not downtrend:
+            # 最近5日最深刺破：用 low 最小值判定（正常波动也会擦下沿，取最深那次）
+            recent5_low = float(low.tail(5).min())
+            if recent5_low < zone_low:
+                # 刺破深度：跌破幅度 ≤ 8% 才算插针洗盘（防趋势破位/深插针）
+                wick = (zone_low - recent5_low) / zone_low
+                # 收盘已收回下沿上方 = 洗盘确认
+                if price > zone_low and wick <= self.spring_wick_pct:
                     spring_signal = True
                     spring_note = f"跌破区间下沿({zone_low:.2f})后快速收回，弹簧测试"
                     accumulation_score += 15
-                break
 
-        # ---- 3. SOS 检测（放量突破区间上沿） ----
+        # ---- 3. SOS 检测（放量突破区间上沿，需非下跌趋势） ----
         sos_signal = False
-        if price > zone_high:
+        if price > zone_high and not downtrend:
             vol_ratio = float(volume.tail(3).mean()) / prior_vol if prior_vol > 0 else 1.0
             if vol_ratio > 1.2:
                 sos_signal = True

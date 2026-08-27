@@ -64,8 +64,12 @@ class TestWyckoff:
         assert "弹簧" in result["reason"]
 
     def test_sos_detection(self):
-        """放量突破 → SOS 信号"""
+        """放量突破 → SOS 信号（v3.1 降噪：需非下跌趋势）"""
         df = make_kline(150)
+        # 构造上涨趋势（降噪后下跌趋势中 SOS 无效）
+        trend = np.linspace(0.9, 1.15, len(df))
+        for col in ("close", "high", "low", "open"):
+            df[col] = df[col] * trend
         # 构造放量突破：最后3日放量 + 价格高于区间上沿
         zone = WyckoffAnalyzer().analyze(df)
         df2 = df.copy()
