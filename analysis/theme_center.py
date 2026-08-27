@@ -13,6 +13,47 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
+
+# 概念名 → 行业名 映射表（题材降级匹配用，解决"概念vs行业"错配）
+CONCEPT_INDUSTRY_MAP = {
+    "转基因": ["种植业", "农化制品", "农产品加工", "食品加工"],
+    "粮食": ["种植业", "农产品加工", "食品加工", "农化制品"],
+    "农业": ["种植业", "农化制品", "农产品加工", "饲料", "养殖业"],
+    "AI": ["半导体", "计算机设", "通信设备", "元件", "软件开发", "游戏"],
+    "人工智能": ["半导体", "计算机设", "通信设备", "元件", "软件开发"],
+    "算力": ["半导体", "计算机设", "通信设备", "元件"],
+    "芯片": ["半导体", "元件", "电子化学"],
+    "半导体": ["半导体", "元件", "电子化学"],
+    "军工": ["国防军工", "航空装备", "航天装备", "地面兵装"],
+    "医药": ["化学制药", "生物制品", "医疗器械", "医疗服务", "中药"],
+    "券商": ["证券Ⅱ", "证券", "多元金融"],
+    "黄金": ["贵金属", "饰品"],
+    "有色": ["贵金属", "小金属", "工业金属", "能源金属"],
+    "新能源": ["光伏设备", "电池", "电网设备", "风电设备"],
+    "光伏": ["光伏设备", "电池"],
+    "锂电": ["电池", "能源金属", "小金属"],
+    "汽车": ["汽车零部", "汽车整车", "乘用车", "商用车"],
+    "地产": ["房地产开", "房地产开发"],
+    "消费": ["食品加工", "饮料乳品", "白酒", "零售", "饰品"],
+    "白酒": ["白酒", "食品加工"],
+    "机器人": ["自动化设备", "通用设备", "专用设备"],
+    "低空": ["航空装备", "航天装备", "军工电子"],
+    "航天": ["航天装备", "军工电子"],
+    "电力": ["电力", "电网设备", "绿电"],
+}
+
+
+def _match_industries(board_name: str, zt: pd.DataFrame) -> pd.DataFrame:
+    """概念名 → 涨停池行业匹配（直接包含 + 映射表补充）"""
+    if "所属行业" not in zt.columns:
+        return zt.iloc[0:0]
+    mask = zt["所属行业"].astype(str).str.contains(board_name, na=False)
+    for keyword, industries in CONCEPT_INDUSTRY_MAP.items():
+        if keyword in board_name:
+            for ind in industries:
+                mask = mask | zt["所属行业"].astype(str).str.contains(ind, na=False)
+    return zt[mask]
+
 from utils.logger import logger
 from analysis._cache import ttl_cache
 
@@ -197,7 +238,7 @@ class ThemeCenter:
             zt = fetch_limit_up_pool()
             fallback = []
             if zt is not None and not zt.empty and "所属行业" in zt.columns:
-                pool = zt[zt["所属行业"].astype(str).str.contains(board_name, na=False)]
+                pool = _match_industries(board_name, zt)
                 for _, r in pool.iterrows():
                     fallback.append({
                         "code": r.get("代码", ""),

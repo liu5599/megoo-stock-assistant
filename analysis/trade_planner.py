@@ -37,8 +37,27 @@ class TradePlanner:
         self.risk_per_trade = risk_per_trade
         self.risk = RiskManager()
 
+    @staticmethod
+    def _half_position(position):
+        """半凯利：仓位减半"""
+        try:
+            position.position_pct = round(position.position_pct * 0.5, 2)
+            position.suggested_shares = int(position.suggested_shares * 0.5 / 100) * 100
+            return position
+        except Exception:
+            return position
+
+    @staticmethod
+    def _clamp_position(position, max_pct):
+        """仓位截断：不超过 max_pct%"""
+        try:
+            position.position_pct = min(position.position_pct, max_pct)
+            return position
+        except Exception:
+            return position
+
     # ═══════════════════════════════════════════════════════════════
-    # 评级
+    # 评级与操作
     # ═══════════════════════════════════════════════════════════════
 
     def _rate(self, decision: Dict, valuation: Dict) -> str:
@@ -98,6 +117,21 @@ class TradePlanner:
             rating = {"A": "S", "B": "A", "C": "B"}.get(rating, "B")
         action = self._action(rating, decision, price)
 
+        # ST/*ST 黑名单过滤（v3.1）：不输出完整交易计划，只给风险提示
+        is_st = "ST" in str(name).upper()
+        if is_st:
+            return {
+                "code": code, "name": name, "price": price,
+                "rating": "C", "action": "回避",
+                "position_pct": 0, "position_shares": 0,
+                "holding_period": "—",
+                "win_rate": 0,
+                "logic": ["⚠️ ST/*ST 标的：退市风险与流动性风险极高，系统不提供交易计划"],
+                "risks": ["ST 股存在退市风险，请远离"],
+                "decision": decision, "valuation": valuation, "wyckoff": wyckoff,
+                "blacklisted": True,
+            }
+
         # 风控参数（止损/止盈/仓位）
         stop_loss = self.risk.get_best_stop_loss(df, price)
         take_profit = self.risk.calc_take_profit(df, price, stop_loss.price)
@@ -105,6 +139,14 @@ class TradePlanner:
             self.total_capital, price, stop_loss.price,
             win_rate=self._win_rate(rating), risk_per_trade_pct=self.risk_per_trade,
         )
+        # v3.1 半凯利保守模式（默认开启；env MEGOO_KELLY_HALF_MODE=false 可关）
+        import os as _os
+        if _os.environ.get("MEGOO_KELLY_HALF_MODE", "true").lower() != "false":
+            position = self._half_position(position)
+        # 单笔风险严格 ≤2% 截断
+        max_pct = self.risk_per_trade * 100
+        if position.position_pct > max_pct:
+            position = self._clamp_position(position, max_pct)
 
         entry_low = round(price * 0.99, 2)   # 入场下沿（现价下1%）
         entry_high = price                    # 入场上沿（现价）

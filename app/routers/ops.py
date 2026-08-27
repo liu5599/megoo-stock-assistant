@@ -209,12 +209,70 @@ def ops_stock_detail(code: str):
 
 @router.get("/theme/{board_name}/detail")
 def ops_theme_detail(board_name: str):
-    """题材详情（第二层钻取）：成分股涨幅榜 + 龙头"""
+    """题材详情（第二层钻取）：成分股 + 值得买入评级筛选 + 参数"""
     from analysis.market_temperature import clean_jsonable
     from analysis.theme_center import ThemeCenter
+    from analysis.trade_planner import TradePlanner
+    from analysis.valuation_space import ValuationSpace
+    from data.data_utils import get_best_fetcher
+    import time as _t
 
     detail = ThemeCenter().get_theme_detail(board_name)
-    return clean_jsonable(detail)
+    stocks = detail.get("stocks") or []
+    if not stocks:
+        return clean_jsonable(detail)
+
+    # 对成分股 top 8 跑交易计划评级（标注"值得买入"）
+    fetcher = get_best_fetcher()
+    enriched = []
+    buy_list = []
+    for s in stocks[:10]:
+        code = s.get("code", "")
+        if not code:
+            continue
+        item = dict(s)
+        try:
+            kl = fetcher.get_history_kline(
+                code, "daily",
+                _t.strftime("%Y%m%d", _t.localtime(_t.time() - 400 * 86400)),
+                _t.strftime("%Y%m%d"), "qfq")
+            if kl is None or kl.data_count < 60:
+                item["rating"] = "-"
+                enriched.append(item)
+                continue
+            decision = None
+            from analysis.decision_signals import DecisionSignals
+            decision = DecisionSignals().comprehensive(kl)
+            val = ValuationSpace().analyze(code)
+            plan = TradePlanner(total_capital=1_000_000).plan(code, s.get("name", code), kl, decision, val)
+            item.update({
+                "rating": plan["rating"],
+                "action": plan["action"],
+                "price": plan["price"],
+                "entry_low": plan["entry_low"],
+                "entry_high": plan["entry_high"],
+                "target_price": plan["target_price"],
+                "stop_loss": plan["stop_loss"],
+                "position_pct": plan["position_pct"],
+                "pe_pct": val.get("pe_pct"),
+                "zone": val.get("zone"),
+                "wyckoff_phase": (plan.get("wyckoff") or {}).get("phase"),
+                "score": decision.get("composite_score") if decision else None,
+            })
+            if plan["rating"] in ("S", "A"):
+                buy_list.append(item)
+        except Exception as e:
+            logger.warning(f"题材成分评级失败 {code}: {e}")
+            item["rating"] = "-"
+        enriched.append(item)
+
+    return clean_jsonable({
+        "name": detail.get("name"),
+        "stocks": enriched,
+        "buy_recommend": buy_list,
+        "leader": detail.get("leader"),
+        "source": detail.get("source", "东财"),
+    })
 
 
 @router.get("/quant")

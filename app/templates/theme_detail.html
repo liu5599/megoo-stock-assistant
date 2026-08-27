@@ -4,26 +4,45 @@
 
 {% block content %}
 <style>
-    .td-container { max-width: 900px; margin: 0 auto; padding: 16px; }
+    .td-container { max-width: 1100px; margin: 0 auto; padding: 16px; }
     .card { background: var(--card-bg, #fff); border-radius: 12px; padding: 18px; margin-bottom: 14px;
             box-shadow: 0 1px 4px rgba(0,0,0,.08); }
-    .card-title { font-size: 16px; font-weight: 700; margin-bottom: 12px; }
+    .card-title { font-size: 16px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+    .buy-card { background: linear-gradient(135deg, #fff5f5, #fff); border: 1px solid #ffd6d6; }
+    .rating { display: inline-block; padding: 2px 8px; border-radius: 4px; color: #fff; font-weight: 600; font-size: 12px; }
+    .rating-S { background: #d32f2f; } .rating-A { background: #ff6f00; }
+    .rating-B { background: #1989fa; } .rating-C { background: #969799; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #f2f3f5; }
-    th { color: #999; font-weight: 500; font-size: 12px; }
+    th { color: #999; font-weight: 500; font-size: 12px; white-space: nowrap; }
     .clickable-row { cursor: pointer; transition: background 0.15s; }
     .clickable-row:hover { background: rgba(231,76,60,0.08) !important; }
-    .up { color: var(--red-up, #e74c3c); }
-    .down { color: var(--green-down, #27ae60); }
+    .up { color: var(--red-up, #e74c3c); } .down { color: var(--green-down, #27ae60); }
     .loading { color: #999; padding: 12px; text-align: center; }
     .btn-back { display: inline-block; padding: 6px 14px; border-radius: 6px; background: #f2f3f5;
                 color: #323233; font-size: 13px; text-decoration: none; margin-bottom: 10px; }
+    .badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .badge-buy { background: #ffe9e9; color: #d32f2f; }
+    .badge-hold { background: #ecf5ff; color: #1989fa; }
+    .muted { color: #999; font-size: 12px; }
+    .buy-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+    .buy-item { border: 1px solid #ffd6d6; border-radius: 10px; padding: 12px; cursor: pointer; background: #fff; transition: box-shadow .15s; }
+    .buy-item:hover { box-shadow: 0 2px 8px rgba(211,47,47,.15); }
+    .buy-name { font-size: 14px; font-weight: 600; }
+    .buy-meta { font-size: 12px; color: #646566; margin-top: 6px; line-height: 1.7; }
+    .buy-meta b { color: #d32f2f; }
 </style>
 
 <div class="td-container">
     <a href="/ops" class="btn-back">← 返回操盘台</a>
+
+    <div class="card buy-card" id="buy-area" style="display:none">
+        <div class="card-title">🎯 值得买入（S/A 级）</div>
+        <div id="buy-grid" class="buy-grid"></div>
+    </div>
+
     <div class="card">
-        <div class="card-title">🔥 {{ board_name }} 成分股</div>
+        <div class="card-title">🔥 {{ board_name }} 成分股（点击查看深度分析）</div>
         <div id="stocks-area" class="loading">加载中...</div>
     </div>
 </div>
@@ -35,22 +54,49 @@ async function loadTheme() {
         const r = await fetch('/api/ops/theme/' + encodeURIComponent({{ board_name|tojson }}) + '/detail');
         const d = await r.json();
         const stocks = d.stocks || [];
+
+        // 值得买入区
+        const buy = d.buy_recommend || [];
+        const buyArea = document.getElementById('buy-area');
+        if (buy.length) {
+            document.getElementById('buy-grid').innerHTML = buy.map(x => `
+                <div class="buy-item" onclick="location.href='/stock/${esc(x.code)}'" title="点击查看 ${esc(x.name)} 深度分析">
+                    <div><span class="rating rating-${x.rating}">${x.rating}级</span>
+                         <span class="buy-name">${esc(x.name)}（${esc(x.code)}）</span>
+                         <span class="badge badge-buy">${esc(x.action || '')}</span></div>
+                    <div class="buy-meta">
+                        现价 <b>${x.price ?? '-'}</b> ｜ 目标 <b>${x.target_price ?? '-'}</b> ｜ 止损 <b>${x.stop_loss ?? '-'}</b><br/>
+                        入场 ${x.entry_low ?? '-'}~${x.entry_high ?? '-'} ｜ 仓位 <b>${x.position_pct ?? '-'}%</b> ｜ PE分位 ${x.pe_pct ?? '-'}%<br/>
+                        威科夫：${esc(x.wyckoff_phase || '-')} ｜ 综合分 ${x.score ?? '-'}
+                    </div>
+                </div>`).join('');
+            buyArea.style.display = '';
+        } else {
+            buyArea.style.display = 'none';
+        }
+
         if (!stocks.length) {
-            area.innerHTML = '<div class="loading">暂无成分股数据（数据源受限或涨停池无该题材）</div>';
+            area.innerHTML = '<div class="loading">暂无成分股数据（数据源受限）</div>';
             return;
         }
         let html = `<table>
-            <thead><tr><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>连板</th><th>封板资金</th></tr></thead><tbody>`;
+            <thead><tr><th>代码</th><th>名称</th><th>评级</th><th>操作</th><th>现价</th><th>涨跌幅</th><th>目标价</th><th>止损价</th><th>仓位</th><th>PE分位</th><th>威科夫</th></tr></thead><tbody>`;
         stocks.forEach(s => {
             const pct = parseFloat(s.pct_chg);
             html += `<tr class="clickable-row" onclick="location.href='/stock/${esc(s.code)}'" title="点击查看 ${esc(s.name)} 深度分析">
-                <td>${esc(s.code)}</td><td>${esc(s.name)}</td><td>${s.price ?? '-'}</td>
+                <td>${esc(s.code)}</td><td>${esc(s.name)}</td>
+                <td>${s.rating && s.rating !== '-' ? `<span class="rating rating-${s.rating}">${s.rating}级</span>` : '-'}</td>
+                <td>${s.action ? `<span class="badge ${String(s.action).includes('买入') ? 'badge-buy' : 'badge-hold'}">${esc(s.action)}</span>` : '-'}</td>
+                <td>${s.price ?? '-'}</td>
                 <td class="${pct >= 0 ? 'up' : 'down'}">${pct ? fmtPct(pct) : '-'}</td>
-                <td>${s.boards ? s.boards + '板' : '-'}</td>
-                <td>${s.seal_amount ? (s.seal_amount/1e8).toFixed(2) + '亿' : '-'}</td></tr>`;
+                <td>${s.target_price ?? '-'}</td>
+                <td>${s.stop_loss ?? '-'}</td>
+                <td>${s.position_pct ? s.position_pct + '%' : '-'}</td>
+                <td>${s.pe_pct ?? '-'}</td>
+                <td>${esc(s.wyckoff_phase || '-')}</td></tr>`;
         });
         html += '</tbody></table>';
-        if (d.source) html += '<div style="font-size:12px;color:#999;margin-top:8px">数据源：' + esc(d.source) + '</div>';
+        if (d.source) html += '<div class="muted" style="margin-top:8px">数据源：' + esc(d.source) + '</div>';
         area.innerHTML = html;
     } catch (e) {
         area.innerHTML = '<div class="loading">加载失败：' + esc(e.message) + '</div>';
