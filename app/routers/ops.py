@@ -2,13 +2,46 @@
 职业经理人面板 API —— 市场温度 / 题材 / 资金 / 三维决策 / 估值 / 日报
 对标：指南针 + 容维题材宝典 融合
 """
-from typing import List, Optional
+import time
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Query
 
 from utils.logger import logger
 
 router = APIRouter(prefix="/ops", tags=["ops"])
+
+
+def _build_warnings(temperature: Dict, themes: Dict, money: Dict) -> List[str]:
+    """数据新鲜度/完整性告警（v3.1 SWR增强）"""
+    import time as _t
+    warnings = []
+    threshold_min = float(__import__("os").environ.get("MEGOO_DATA_EXPIRE_THRESHOLD_MIN", "10"))
+    now = _t.time()
+
+    def _check_age(ts_str: str, label: str):
+        if not ts_str:
+            warnings.append(f"{label}: 无时间戳")
+            return
+        try:
+            ts = _t.mktime(_t.strptime(str(ts_str)[:19], "%Y-%m-%d %H:%M:%S"))
+            age_min = (now - ts) / 60
+            if age_min > threshold_min:
+                warnings.append(f"{label}: 数据已过期 {age_min:.0f} 分钟（阈值 {threshold_min:.0f}min）")
+        except Exception:
+            warnings.append(f"{label}: 时间戳格式异常")
+
+    _check_age(temperature.get("timestamp", ""), "温度计")
+    _check_age((themes or {}).get("timestamp", ""), "题材")
+    _check_age((money or {}).get("timestamp", ""), "资金")
+
+    if not temperature:
+        warnings.append("温度计数据为空")
+    if not (themes or {}).get("hot_themes") and not (themes or {}).get("new_themes"):
+        warnings.append("题材数据为空")
+    if not (money or {}).get("bull_bear"):
+        warnings.append("多空数据为空")
+    return warnings[:5]
 
 
 @router.get("/overview")
@@ -58,6 +91,9 @@ def ops_overview():
         "themes": themes,
         "money": money,
         "timestamp": temperature.get("timestamp", ""),
+        "data_timestamp": temperature.get("timestamp", "") or time.strftime("%Y-%m-%d %H:%M:%S"),
+        "data_source": "东财/乐咕/涨停池多源",
+        "warnings": _build_warnings(temperature, themes, money),
     })
 
     # 持久化到磁盘（供重启后秒回）
@@ -133,6 +169,15 @@ def ops_plan(codes: str = Query("", description="股票代码，逗号分隔"), 
     # 按评级排序 S>A>B>C
     rank = {"S": 0, "A": 1, "B": 2, "C": 3}
     plans.sort(key=lambda p: rank.get(p.get("rating", "C"), 9))
+
+    # 信号快照（v3.1）：自动存档交易计划，供绩效统计与复盘
+    try:
+        from analysis.snapshot_store import save_plans_snapshot
+        saved = save_plans_snapshot(plans)
+        if saved:
+            logger.info(f"交易计划快照已保存: {saved}条")
+    except Exception as e:
+        logger.warning(f"快照保存失败: {e}")
 
     # 组合层：市场温度 → 总仓位建议
     portfolio = {}
@@ -332,6 +377,28 @@ def ops_portfolio_risk(codes: str = Query("", description="持仓/自选股代�
     risk["codes"] = [{"code": c, "name": names.get(c, c)} for c in frame.columns]
     risk["available"] = risk.get("available", False) and len(frame) >= 20
     return clean_jsonable(risk)
+
+
+@router.get("/snapshots")
+def ops_snapshots(trade_date: str = Query("", description="日期 YYYY-MM-DD"), limit: int = Query(50)):
+    """历史信号快照查询（v3.1 复盘）"""
+    from analysis.market_temperature import clean_jsonable
+    from analysis import snapshot_store
+
+    rows = snapshot_store.query_snapshots(trade_date=trade_date, limit=limit)
+    return clean_jsonable({
+        "snapshots": rows,
+        "stats": snapshot_store.stats(),
+    })
+
+
+@router.get("/performance")
+def ops_performance(trade_date: str = Query("", description="快照日期 YYYY-MM-DD"), horizon: int = Query(5)):
+    """信号绩效统计（v3.1 回测验证 S/A 胜率）"""
+    from analysis.market_temperature import clean_jsonable
+    from analysis.factor_performance import get_performance_report
+
+    return clean_jsonable(get_performance_report(trade_date=trade_date, horizon=horizon))
 
 
 @router.get("/report")
