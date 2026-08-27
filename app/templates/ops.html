@@ -75,6 +75,15 @@
 <div class="ops-container">
     <div class="section-title">🎯 职业经理人操盘台</div>
 
+    <!-- 数据状态栏（v3.1：时间戳/来源/告警） -->
+    <div class="card" style="padding:10px 18px" id="data-status-bar">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:#999">
+            <span>⏱️ 数据时间：<b id="ds-timestamp" style="color:#323233">—</b></span>
+            <span>📡 来源：<b id="ds-source" style="color:#323233">—</b></span>
+            <span id="ds-warnings"></span>
+        </div>
+    </div>
+
     <!-- 市场温度 -->
     <div class="card">
         <div class="card-title">🌡️ 市场温度计（判大势）</div>
@@ -222,6 +231,9 @@ async function loadOverview() {
         const r = await fetch('/api/ops/overview');
         const d = await r.json();
 
+        // 数据状态栏（v3.1）
+        renderDataStatus(d);
+
         // 温度
         const t = d.temperature || {};
         const temp = t.temperature ?? '-';
@@ -295,6 +307,19 @@ async function loadOverview() {
         document.getElementById('temp-area').innerHTML = '<div class="loading">数据加载失败：' + esc(e.message) + '</div>';
         toast('盘面数据加载失败 ❌', false);
     }
+}
+
+// 数据状态栏：时间戳/来源/warning（v3.1）
+function renderDataStatus(d) {
+    const ts = document.getElementById('ds-timestamp');
+    const src = document.getElementById('ds-source');
+    const warn = document.getElementById('ds-warnings');
+    if (d.data_timestamp) ts.textContent = d.data_timestamp;
+    if (d.data_source) src.textContent = d.data_source;
+    const ws = d.warnings || [];
+    warn.innerHTML = ws.length
+        ? ws.map(w => `<span class="badge" style="background:#fef0f0;color:#d32f2f">⚠️ ${esc(w)}</span>`).join(' ')
+        : '<span style="color:#07c160">✅ 数据新鲜</span>';
 }
 
 async function loadStocks() {

@@ -28,7 +28,12 @@ _HOSTS = [
 _LAST_REQ = 0.0
 _MIN_INTERVAL = 0.6  # 限速：请求最小间隔（秒）
 _cookie = ""
-_circuit_open = False
+
+
+def _circuit_open() -> bool:
+    """熔断状态（持久化，重启不丢失；30分钟后自动半开）"""
+    from data.circuit_state import is_open
+    return is_open("eastmoney_direct")
 
 
 def _get_session() -> requests.Session:
@@ -66,9 +71,9 @@ def _throttle():
 
 def fetch_clist(fid: str = "f62", fs: str = "", pn: int = 1, pz: int = 100,
                 fields: str = "f12,f14,f2,f3,f62,f184") -> Optional[pd.DataFrame]:
-    """通用东财行情列表接口（域名轮换 + 限速 + cookie）"""
-    global _circuit_open
-    if _circuit_open:
+    """通用东财行情列表接口（域名轮换 + 限速 + cookie + 持久化熔断）"""
+    from data.circuit_state import set_open, set_closed
+    if _circuit_open():
         return None
 
     params = {
@@ -90,23 +95,28 @@ def fetch_clist(fid: str = "f62", fs: str = "", pn: int = 1, pz: int = 100,
                 last_err = "空数据"
                 continue
             df = pd.DataFrame(diff)
-            _circuit_open = False
+            set_closed("eastmoney_direct")
             return df
         except Exception as e:
             last_err = str(e)[:80]
             logger.warning(f"东财直连失败({host}): {last_err}，换域名...")
             time.sleep(1.0)
 
-    # 全部失败 → 熔断（让调用方走 akshare/Tushare 兜底）
-    _circuit_open = True
-    logger.warning(f"东财直连熔断开启: {last_err}")
+    # 全部失败 → 熔断（持久化 + 告警，让调用方走降级源）
+    set_open("eastmoney_direct")
+    try:
+        from app.services.alert_center import alert_circuit_break
+        alert_circuit_break("东财直连")
+    except Exception:
+        pass
+    logger.warning(f"东财直连熔断开启(持久化): {last_err}")
     return None
 
 
 def reset_circuit():
     """重置熔断（供长时间间隔后恢复尝试）"""
-    global _circuit_open
-    _circuit_open = False
+    from data.circuit_state import set_closed
+    set_closed("eastmoney_direct")
 
 
 # ═══════════════════════════════════════════════════════════════

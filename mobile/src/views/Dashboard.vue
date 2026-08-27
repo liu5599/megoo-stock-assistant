@@ -2,6 +2,13 @@
   <div class="page">
     <div class="page-title">🎯 操盘台</div>
 
+    <!-- 数据状态（v3.1） -->
+    <div class="data-status" v-if="data">
+      <span>⏱️ {{ data.data_timestamp || '—' }}</span>
+      <span v-if="data.warnings && data.warnings.length" class="warn-badge">⚠️ {{ data.warnings.length }} 项告警</span>
+      <span v-else class="ok-badge">✅ 数据新鲜</span>
+    </div>
+
     <van-pull-refresh v-model="refreshing" @refresh="load">
       <!-- 加载提示（首次数据源约20秒） -->
       <van-notice-bar v-if="loading" mode="link" color="#1989fa" background="#ecf5ff">
