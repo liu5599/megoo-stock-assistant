@@ -26,7 +26,7 @@
             <div class="label">温度</div>
           </div>
           <div style="flex:1;min-width:0">
-            <div class="temp-zone" :style="{ color: tempColor }">{{ temp.zone || '未知' }}</div>
+            <div class="temp-zone" :style="{ color: tempColor }">{{ temp.zone || '未知' }}<van-tag v-if="temp.degraded" type="warning" style="margin-left:6px">降级</van-tag></div>
             <div class="temp-advice">{{ temp.advice }}</div>
             <div class="temp-bar">
               <div class="cursor" :style="{ left: pct + '%' }"></div>

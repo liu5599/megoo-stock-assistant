@@ -145,16 +145,41 @@ class MarketTemperature:
         except Exception:
             return 50.0
 
+    # ---------------- 降级兜底（v3.1：乐咕不可用时） ----------------
+
+    def _fallback_activity(self) -> Dict:
+        """乐咕市场活跃度不可用：涨停池家数 → 情绪代理（量能未知→中性）"""
+        try:
+            from analysis.theme_center import fetch_limit_up_pool
+            zt = fetch_limit_up_pool()
+            if zt is not None and not zt.empty:
+                n = len(zt)
+                return {"上涨": n * 10, "下跌": 0, "涨停": n, "跌停": 0, "成交额": 0}
+        except Exception as e:
+            logger.warning(f"温度计降级源失败: {e}")
+        return {}
+
     # ---------------- 综合 ----------------
 
     def compute_temperature(self) -> Dict:
         """综合三路信号输出市场温度与区域判断"""
         activity = fetch_market_activity()
+        data_source = "乐咕"
+        if not activity:
+            activity = self._fallback_activity()
+            data_source = "本地降级(涨停池)"
         val_df = fetch_index_valuation(self.index_symbol)
 
         emotion = self._score_emotion(activity or {})
         volume = self._score_volume(activity or {})
         valuation = self._score_valuation(val_df)
+
+        # 降级检测：任一数据源失败 → 标记降级，禁止当作真实判断
+        degraded_sources = []
+        if not activity:
+            degraded_sources.append("市场活跃度(乐咕)")
+        if val_df is None or val_df.empty:
+            degraded_sources.append("估值分位(乐咕PE)")
 
         # 温度 = 情绪*0.4 + 量能*0.2 + 估值*0.4
         temperature = round(emotion * 0.4 + volume * 0.2 + valuation * 0.4, 1)
@@ -183,6 +208,11 @@ class MarketTemperature:
                 "activity": activity or {},
                 "valuation_pct": valuation,
             },
+            "degraded": len(degraded_sources) > 0,
+            "degraded_sources": degraded_sources,
+            "data_source": data_source,
+            "warning": ("数据源降级(" + "/".join(degraded_sources) + ")，温度按中性兜底，仅供参考"
+                        if degraded_sources else ""),
             "timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
 

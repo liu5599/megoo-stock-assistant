@@ -132,6 +132,8 @@ class DailyReportService:
         zone = t.get("zone", "未知")
         temp = t.get("temperature", "-")
         lines.append(f"\n## 🌡️ 市场温度：{temp}／100 —— {zone}")
+        if t.get("warning"):
+            lines.append(f"\n> ⚠️ {t['warning']}")
         lines.append(f"\n> {t.get('advice', '')}")
 
         # 2.5 Quant 量化视角

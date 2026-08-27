@@ -33,7 +33,9 @@ class BacktestConfig:
     start_date: str = "20250101"
     end_date: str = "20260621"
     rebalance_freq: str = "monthly"       # daily / weekly / monthly
-    commission_rate: float = 0.0003       # 手续费率
+    commission_rate: float = 0.0003       # 手续费率（双边）
+    min_commission: float = 5.0          # 单笔最低佣金（A股规则）
+    stamp_tax_rate: float = 0.001        # 印花税（卖出单边千1）
     slippage: float = 0.001              # 滑点
     benchmark_code: str = "000300"        # 基准指数
     initial_capital: float = 1_000_000    # 初始资金
@@ -104,6 +106,19 @@ class BacktestEngine:
         self._positions: Dict[str, float] = {}  # 当前持仓 {code: weight}
         self._cash: float = config.initial_capital
         self._position_history: List[Dict] = []
+
+    # ======================== 交易成本 ========================
+
+    def _buy_cost(self, amount: float) -> float:
+        """买入总成本 = 金额 + 佣金（含最低5元）"""
+        commission = max(amount * self.config.commission_rate, self.config.min_commission)
+        return amount + commission
+
+    def _sell_proceeds(self, amount: float) -> float:
+        """卖出净得 = 金额 - 佣金（含最低5元）- 印花税(卖出单边千1)"""
+        commission = max(amount * self.config.commission_rate, self.config.min_commission)
+        stamp = amount * self.config.stamp_tax_rate
+        return amount - commission - stamp
 
     # ======================== 主回测流程 ========================
 
@@ -229,7 +244,7 @@ class BacktestEngine:
             for code, shares in list(current_holdings.items()):
                 price = self._get_price(date, code, price_data)
                 if price is not None:
-                    sell_amount = shares * price * (1 - self.config.commission_rate)
+                    sell_amount = self._sell_proceeds(shares * price)
                     self._cash += sell_amount
             return {}
 
@@ -254,7 +269,7 @@ class BacktestEngine:
             target_value = current_market_value * target_weight
             shares = target_value / buy_price
             # 扣除手续费
-            cost = shares * buy_price * (1 + self.config.commission_rate)
+            cost = self._buy_cost(shares * buy_price)
             total_cost += cost
             new_holdings[code] = shares
 
@@ -264,7 +279,7 @@ class BacktestEngine:
                 price = self._get_price(date, code, price_data)
                 if price is not None:
                     sell_price = price * (1 - self.config.slippage)
-                    sell_amount = shares * sell_price * (1 - self.config.commission_rate)
+                    sell_amount = self._sell_proceeds(shares * sell_price)
                     self._cash += sell_amount
 
         # 扣除买入成本
