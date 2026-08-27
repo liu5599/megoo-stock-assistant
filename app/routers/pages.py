@@ -75,6 +75,12 @@ async def ops_page():
     return render("ops.html", {"active_page": "ops", "watchlist_codes": codes})
 
 
+@router.get("/theme/{name}", response_class=HTMLResponse)
+async def theme_detail_page(name: str):
+    """题材详情页（第二层钻取）"""
+    return render("theme_detail.html", {"active_page": "ops", "board_name": name})
+
+
 @router.get("/watchlist", response_class=HTMLResponse)
 async def watchlist_page():
     return render("watchlist.html", {"active_page": "watchlist"})

@@ -148,6 +148,17 @@ class MoneyFlow:
             f"{prefix}小单净流入-净额": "small_net",
         }
         df = df.rename(columns={k: v for k, v in rename.items() if k in df.columns})
+        # 直连源只提供今日数据：3日/5日请求时降级用今日列
+        if "main_net" not in df.columns and "今日主力净流入-净额" in df.columns:
+            df = df.rename(columns={
+                "今日主力净流入-净额": "main_net",
+                "今日主力净流入-净占比": "main_net_pct",
+                "今日涨跌幅": "pct_chg",
+            })
+            if indicator != "今日":
+                logger.info(f"资金流 {indicator} 榜使用今日直连数据（限频降级）")
+        if "main_net" not in df.columns:
+            return []
         for col in ("main_net", "main_net_pct", "pct_chg"):
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")

@@ -7,6 +7,11 @@
     .ops-container { max-width: 1100px; margin: 0 auto; padding: 16px; }
     .card { background: var(--card-bg, #fff); border-radius: 12px; padding: 18px; margin-bottom: 14px;
             box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .clickable-row { cursor: pointer; transition: background 0.15s; }
+    .clickable-row:hover { background: rgba(231,76,60,0.08) !important; }
+    .clickable-card { cursor: pointer; transition: background 0.15s; border-radius: 8px; padding: 6px; }
+    .clickable-card:hover { background: rgba(231,76,60,0.05) !important; }
+    .drill-hint { font-size: 11px; color: var(--muted, #999); margin-left: 6px; }
     .card-title { font-size: 16px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
 
     /* 温度仪表 */
@@ -258,9 +263,9 @@ async function loadOverview() {
         document.getElementById('theme-area').innerHTML = hot.length ? `
             <div class="scroll-x">
             ${hot.map(x => `
-                <div class="theme-item">
+                <div class="theme-item clickable-card" onclick="location.href='/theme/${encodeURIComponent(x.name)}'" title="点击查看 ${esc(x.name)} 成分股">
                     <div>
-                        <div class="theme-name">${esc(x.name)} <span class="${parseFloat(x.pct_chg) >= 0 ? 'up' : 'down'}">${fmtPct(x.pct_chg)}</span></div>
+                        <div class="theme-name">${esc(x.name)} <span class="${parseFloat(x.pct_chg) >= 0 ? 'up' : 'down'}">${fmtPct(x.pct_chg)}</span><span class="drill-hint">›</span></div>
                         <div class="theme-leader">领涨：${esc(x.leader || '—')} ${x.leader_pct ? fmtPct(x.leader_pct) : ''} ｜ 热度 ${x.heat_score ?? '-'}</div>
                     </div>
                 </div>`).join('')}
@@ -269,9 +274,9 @@ async function loadOverview() {
         // 情绪高标
         const senti = (d.themes?.sentiment_stocks || []).slice(0, 6);
         document.getElementById('sentiment-area').innerHTML = senti.length ? senti.map(x => `
-            <div class="theme-item">
+            <div class="theme-item clickable-card" onclick="location.href='/stock/${esc(x.code)}'" title="点击查看 ${esc(x.name)} 深度分析">
                 <div>
-                    <div class="theme-name">${esc(x.name)} <span class="badge badge-buy">${esc(x.tag || '')}</span></div>
+                    <div class="theme-name">${esc(x.name)} <span class="badge badge-buy">${esc(x.tag || '')}</span><span class="drill-hint">›</span></div>
                     <div class="theme-leader">连板 ${x.consecutive_days ?? '-'} ｜ 封板 ${((x.seal_amount||0)/1e8).toFixed(2)} 亿</div>
                 </div>
             </div>`).join('') : '<div class="loading">暂无涨停数据</div>';
@@ -279,9 +284,9 @@ async function loadOverview() {
         // 龙虎榜
         const lhb = (d.money?.lhb || []).slice(0, 6);
         document.getElementById('lhb-area').innerHTML = lhb.length ? lhb.map(x => `
-            <div class="theme-item">
+            <div class="theme-item clickable-card" onclick="location.href='/stock/${esc(x.code)}'" title="点击查看 ${esc(x.name)} 深度分析">
                 <div>
-                    <div class="theme-name">${esc(x.name)}（${esc(x.code)}）</div>
+                    <div class="theme-name">${esc(x.name)}（${esc(x.code)}）<span class="drill-hint">›</span></div>
                     <div class="theme-leader">净买 ${((x.net_buy||0)/1e8).toFixed(2)} 亿 ｜ ${esc(x.reason || '')}</div>
                 </div>
             </div>`).join('') : '<div class="loading">龙虎榜数据暂不可用</div>';
