@@ -89,7 +89,12 @@
 import { ref, onMounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
-import * as echarts from 'echarts'
+import * as echarts from 'echarts/core'
+import { CandlestickChart } from 'echarts/charts'
+import { GridComponent, TooltipComponent, DataZoomComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
+
+echarts.use([CandlestickChart, GridComponent, TooltipComponent, DataZoomComponent, CanvasRenderer])
 import { fetchStockDetail } from '../api'
 
 const route = useRoute()
