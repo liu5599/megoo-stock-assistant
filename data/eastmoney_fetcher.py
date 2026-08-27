@@ -63,7 +63,7 @@ class EastMoneyFetcher(DataFetcher):
     # ======================== 实时行情 ========================
 
     def get_realtime_quote(self, codes: List[str]) -> Dict[str, StockQuote]:
-        """获取实时行情（东方财富 ulist API）"""
+        """获取实时行情（东方财富 ulist API → 腾讯 qt.gtimg.cn 批量兜底）"""
         result = {}
         for batch in [codes[i:i+50] for i in range(0, len(codes), 50)]:
             # ulist.np/get 直接用 secids 逗号分隔，b: 格式已失效
@@ -77,6 +77,9 @@ class EastMoneyFetcher(DataFetcher):
                 },
             )
             if not data or "data" not in data:
+                # 东财限频/断连 → 腾讯批量实时行情兜底
+                tencent = self._get_realtime_quote_from_tencent(batch)
+                result.update(tencent)
                 continue
             items = self._diff_list(data["data"].get("diff")) or self._diff_list(data["data"].get("klines"))
             for item in items:
@@ -113,6 +116,61 @@ class EastMoneyFetcher(DataFetcher):
         if code.startswith("6") or code.startswith("5"):
             return f"1.{code}"
         return f"0.{code}"
+
+    @staticmethod
+    def _to_tx_code(code: str) -> str:
+        """转腾讯 qt.gtimg.cn 代码格式：sh600519 / sz000001"""
+        code = code.strip()
+        if code.startswith(("6", "5", "9")):
+            return f"sh{code}"
+        return f"sz{code}"
+
+    def _get_realtime_quote_from_tencent(self, codes: List[str]) -> Dict[str, StockQuote]:
+        """腾讯批量实时行情兜底（东财限频/断连时）。qt.gtimg.cn 无官方文档但长期稳定，GBK 编码。"""
+        result: Dict[str, StockQuote] = {}
+        if not codes:
+            return result
+        try:
+            q = ",".join(self._to_tx_code(c) for c in codes)
+            r = self._session.get(f"https://qt.gtimg.cn/q={q}", timeout=self.timeout)
+            r.encoding = "gbk"
+            for line in r.text.strip().split(";"):
+                line = line.strip()
+                if "=" not in line or line.startswith("v_pv_"):
+                    continue
+                _, val = line.split("=", 1)
+                parts = val.strip().strip('"').split("~")
+                if len(parts) < 40:
+                    continue
+                code = parts[2]
+                try:
+                    price = float(parts[3] or 0)
+                    pre_close = float(parts[4] or 0)
+                    change_pct = (price - pre_close) / pre_close * 100 if pre_close else 0
+                    result[code] = StockQuote(
+                        code=code,
+                        name=parts[1],
+                        price=price,
+                        change_pct=round(change_pct, 2),
+                        change_amount=price - pre_close,
+                        volume=float(parts[6] or 0),
+                        amount=float(parts[37] or 0) * 1e4,  # 万元 → 元
+                        turnover=float(parts[38] or 0),
+                        amplitude=float(parts[43] or 0),
+                        high=float(parts[33] or 0),
+                        low=float(parts[34] or 0),
+                        open=float(parts[5] or 0),
+                        pre_close=pre_close,
+                        pe_dynamic=float(parts[39] or 0) if parts[39] and parts[39] != "-" else None,
+                        pb=float(parts[46] or 0) if len(parts) > 46 and parts[46] and parts[46] != "-" else None,
+                        total_market_cap=float(parts[45] or 0) * 1e8 if len(parts) > 45 and parts[45] else None,
+                        circulating_market_cap=float(parts[44] or 0) * 1e8 if len(parts) > 44 and parts[44] else None,
+                    )
+                except (ValueError, TypeError, IndexError) as e:
+                    logger.debug(f"腾讯行情解析失败 {code}: {e}")
+        except Exception as e:
+            logger.warning(f"腾讯实时行情兜底失败: {e}")
+        return result
 
     @staticmethod
     def _diff_list(diff):

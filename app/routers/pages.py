@@ -75,6 +75,12 @@ async def ops_page():
     return render("ops.html", {"active_page": "ops", "watchlist_codes": codes})
 
 
+@router.get("/lhb", response_class=HTMLResponse)
+async def lhb_page():
+    """龙虎榜完整页（免费东财源）"""
+    return render("lhb.html", {"active_page": "ops"})
+
+
 @router.get("/theme/{name}", response_class=HTMLResponse)
 async def theme_detail_page(name: str):
     """题材详情页（第二层钻取）"""

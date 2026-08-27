@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+
+{% block title %}💎 龙虎榜 - megoo股票助手{% endblock %}
+
+{% block content %}
+<style>
+    .lhb-container { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    .card { background: var(--card-bg, #fff); border-radius: 12px; padding: 18px; margin-bottom: 14px;
+            box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .card-title { font-size: 16px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 8px 6px; text-align: center; border-bottom: 1px solid #f0f0f0; }
+    th { color: #888; font-weight: 600; }
+    .up { color: #d32f2f; } .down { color: #2e7d32; }
+    .clickable-row { cursor: pointer; transition: background 0.15s; }
+    .clickable-row:hover { background: rgba(231,76,60,0.08) !important; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; }
+    .badge-buy { background: #ffebee; color: #c62828; }
+    .badge-sell { background: #e8f5e9; color: #2e7d32; }
+    .btn { border: none; border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .btn-outline { background: #fff; color: #333; border: 1px solid #ddd; }
+    .btn-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
+    .loading { text-align: center; color: #888; padding: 30px; }
+    .scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .toast { position: fixed; top: 70px; left: 50%; transform: translateX(-50%); padding: 10px 20px;
+             border-radius: 8px; color: #fff; font-weight: 600; z-index: 999; display: none; }
+    .toast.ok { background: #2e7d32; } .toast.err { background: #c62828; }
+    .section-title { font-size: 18px; font-weight: 700; margin: 20px 0 10px; }
+    .meta { font-size: 12px; color: #888; margin-bottom: 10px; }
+</style>
+
+<div class="lhb-container">
+    <div class="section-title">💎 龙虎榜大资金（免费东财源）</div>
+    <div class="card">
+        <div class="card-title">📋 完整榜单 <span style="font-size:12px;font-weight:400;color:#888">点击行查看个股深度分析</span></div>
+        <div class="btn-row" style="margin-bottom:12px">
+            <input type="date" id="start-date" style="padding:6px;border:1px solid #ddd;border-radius:6px;font-size:13px">
+            <button class="btn btn-outline" onclick="loadLhb()">🔄 刷新榜单</button>
+            <button class="btn btn-outline" onclick="loadLhb(50)">显示 50 条</button>
+            <button class="btn btn-outline" onclick="loadLhb(100)">显示 100 条</button>
+            <span class="meta" id="lhb-meta"></span>
+        </div>
+        <div class="scroll-x">
+            <table>
+                <thead><tr>
+                    <th>代码</th><th>名称</th><th>收盘价</th><th>涨跌幅</th><th>净买额</th>
+                    <th>买入额</th><th>卖出额</th><th>成交额</th><th>换手率</th><th>上榜原因</th>
+                </tr></thead>
+                <tbody id="lhb-body"><tr><td colspan="10" class="loading">加载中...</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let currentLimit = 50;
+
+function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function toast(msg, ok = true) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast ' + (ok ? 'ok' : 'err');
+    t.style.display = 'block';
+    setTimeout(() => t.style.display = 'none', 2200);
+}
+function fmtY(n) { // 元 → 亿
+    if (n == null || isNaN(n)) return '-';
+    const v = Math.abs(n);
+    return (v >= 1e8 ? (n / 1e8).toFixed(2) + '亿' : v >= 1e4 ? (n / 1e4).toFixed(1) + '万' : n.toFixed(0));
+}
+function fmtPct(n) {
+    if (n == null || isNaN(n)) return '-';
+    return (n > 0 ? '+' : '') + Number(n).toFixed(2) + '%';
+}
+
+async function loadLhb(limit) {
+    if (limit) currentLimit = limit;
+    const body = document.getElementById('lhb-body');
+    body.innerHTML = '<tr><td colspan="10" class="loading">加载中...</td></tr>';
+    const sd = document.getElementById('start-date').value;
+    const params = new URLSearchParams({ limit: currentLimit });
+    if (sd) params.set('start_date', sd.replace(/-/g, ''));
+    try {
+        const r = await fetch('/api/ops/lhb?' + params.toString());
+        const d = await r.json();
+        const rows = d.lhb || [];
+        document.getElementById('lhb-meta').textContent = `共 ${d.count} 条 ｜ ${d.source} ｜ ${d.timestamp}`;
+        if (!rows.length) {
+            body.innerHTML = '<tr><td colspan="10" class="loading">暂无龙虎榜数据（非交易日或数据源暂不可用）</td></tr>';
+            return;
+        }
+        body.innerHTML = rows.map(x => `
+            <tr class="clickable-row" onclick="location.href='/stock/${esc(x.code)}'" title="点击查看 ${esc(x.name)} 深度分析">
+                <td>${esc(x.code)}</td>
+                <td><b>${esc(x.name)}</b></td>
+                <td>${x.close ?? '-'}</td>
+                <td class="${x.pct_chg >= 0 ? 'up' : 'down'}">${fmtPct(x.pct_chg)}</td>
+                <td class="${x.net_buy >= 0 ? 'up' : 'down'}"><b>${fmtY(x.net_buy)}</b></td>
+                <td>${fmtY(x.buy_amount)}</td>
+                <td>${fmtY(x.sell_amount)}</td>
+                <td>${fmtY(x.amount)}</td>
+                <td>${x.turnover != null ? Number(x.turnover).toFixed(2) + '%' : '-'}</td>
+                <td style="text-align:left;font-size:12px;max-width:280px">${esc(x.reason || '')}</td>
+            </tr>`).join('');
+    } catch (e) {
+        body.innerHTML = '<tr><td colspan="10" class="loading">加载失败：' + esc(e.message) + '</td></tr>';
+        toast('龙虎榜加载失败 ❌', false);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => loadLhb(50));
+</script>
+{% endblock %}

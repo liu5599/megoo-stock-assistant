@@ -28,7 +28,10 @@
 
     <!-- 龙虎榜 -->
     <div class="card">
-      <div class="section-title" style="margin-top:0">💎 龙虎榜大资金</div>
+      <div class="section-title" style="margin-top:0;display:flex;align-items:center;justify-content:space-between">
+        <span>💎 龙虎榜大资金</span>
+        <span class="link" style="font-size:12px;color:#d32f2f" @click="$router.push('/lhb')">查看完整 ›</span>
+      </div>
       <div v-for="(l, i) in lhb" :key="i" class="list-item">
         <div class="item-main">
           <div class="item-title">{{ l.name }}（{{ l.code }}）</div>

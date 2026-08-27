@@ -62,4 +62,9 @@ export function fetchThemeDetail(name) {
   return request('/api/ops/theme/' + name + '/detail')
 }
 
-export default { fetchOverview, fetchStocks, fetchReport, pushReport, fetchPlans, fetchQuant, fetchPortfolioRisk, fetchStockDetail, fetchThemeDetail }
+// 完整龙虎榜（免费东财源）
+export function fetchLhb(limit = 50) {
+  return request('/api/ops/lhb?limit=' + limit)
+}
+
+export default { fetchOverview, fetchStocks, fetchReport, pushReport, fetchPlans, fetchQuant, fetchPortfolioRisk, fetchStockDetail, fetchThemeDetail, fetchLhb }

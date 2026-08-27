@@ -9,6 +9,7 @@ const routes = [
   { path: '/report', name: 'report', component: () => import('../views/Report.vue'), meta: { title: '日报' } },
   { path: '/stock/:code', name: 'stockDetail', component: () => import('../views/StockDetail.vue'), meta: { title: '个股详情' } },
   { path: '/theme/:name', name: 'themeDetail', component: () => import('../views/ThemeDetail.vue'), meta: { title: '题材详情' } },
+  { path: '/lhb', name: 'lhb', component: () => import('../views/Lhb.vue'), meta: { title: '龙虎榜' } },
 ]
 
 const router = createRouter({

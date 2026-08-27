@@ -109,6 +109,22 @@ def ops_overview():
     return result
 
 
+@router.get("/lhb")
+def ops_lhb(limit: int = Query(50, ge=1, le=100), start_date: str = Query("", description="起始日期 YYYYMMDD，空=近7日")):
+    """完整龙虎榜（免费东财源，按净买额降序）"""
+    from analysis.market_temperature import clean_jsonable
+    from analysis.money_flow import MoneyFlow
+
+    mf = MoneyFlow(top_n=limit)
+    rows = clean_jsonable(mf.get_lhb(limit))
+    return {
+        "lhb": rows,
+        "count": len(rows),
+        "source": "东方财富(akshare)",
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
 @router.get("/stocks")
 def ops_stocks(codes: str = Query("", description="自选股代码，逗号分隔")):
     """自选股三维决策 + 估值空间"""
