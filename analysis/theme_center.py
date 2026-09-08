@@ -17,6 +17,12 @@ import pandas as pd
 # 概念名 → 行业名 映射表（题材降级匹配用，解决"概念vs行业"错配）
 CONCEPT_INDUSTRY_MAP = {
     "转基因": ["种植业", "农化制品", "农产品加工", "食品加工"],
+    "玉米": ["种植业", "农产品加工", "农化制品", "饲料"],
+    "大豆": ["种植业", "农产品加工", "饲料"],
+    "种业": ["种植业", "农产品加工"],
+    "草甘膦": ["农化制品", "化学制品"],
+    "代糖": ["食品加工", "饮料乳品", "化学制品"],
+    "白糖": ["农产品加工", "食品加工"],
     "粮食": ["种植业", "农产品加工", "食品加工", "农化制品"],
     "农业": ["种植业", "农化制品", "农产品加工", "饲料", "养殖业"],
     "AI": ["半导体", "计算机设", "通信设备", "元件", "软件开发", "游戏"],
@@ -53,6 +59,55 @@ def _match_industries(board_name: str, zt: pd.DataFrame) -> pd.DataFrame:
             for ind in industries:
                 mask = mask | zt["所属行业"].astype(str).str.contains(ind, na=False)
     return zt[mask]
+
+
+def _to_int(v) -> int:
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return 0
+
+
+def theme_stage(limit_up_count: int, highest_board: int) -> str:
+    """题材阶段判定（当日梯队视角）—— 纯函数便于测试
+    启动: 零星首板试探 → 发酵: 首板潮/梯队初成 → 主升: 龙头打开高度资金一致
+    → 高潮: 亢奋末段防分歧。退潮需昨日晋级率，当日判不了（盘后模块做）。
+    """
+    if limit_up_count <= 0:
+        return ""
+    if highest_board >= 5:
+        return "高潮"
+    if highest_board >= 3:
+        return "主升"
+    if highest_board == 2:
+        return "主升" if limit_up_count >= 6 else "发酵"
+    # 全首板
+    return "发酵" if limit_up_count >= 5 else "启动"
+
+
+def zt_stats_for_board(board_name: str, zt: pd.DataFrame) -> Optional[Dict]:
+    """题材 × 涨停池统计：涨停家数/最高连板/连板梯队/龙头（修复：概念名直等匹配≈全0的 bug）"""
+    pool = _match_industries(board_name, zt)
+    if pool is None or pool.empty:
+        return None
+    cb = [_to_int(v) for v in pool["连板数"]] if "连板数" in pool.columns else []
+    count = len(pool)
+    highest = max(cb) if cb else 1
+    ladder = {}
+    for v in cb:
+        ladder[f"{v}板"] = ladder.get(f"{v}板", 0) + 1
+    leader = ""
+    if "连板数" in pool.columns:
+        pool = pool.copy()
+        pool["_cb"] = cb
+        top = pool.sort_values(["_cb", "封板资金"], ascending=False)
+        leader = str(top.iloc[0].get("名称", "")) if len(top) else ""
+    return {
+        "limit_up_count": count,
+        "highest_board": highest,
+        "ladder": ladder,
+        "leader": leader,
+    }
 
 from utils.logger import logger
 from analysis._cache import ttl_cache
@@ -189,18 +244,21 @@ class ThemeCenter:
         top_n = top_n or self.top_n
         boards = self.get_new_themes(top_n=60)
         zt = fetch_limit_up_pool()
-        zt_board_counter = {}
-        if zt is not None and not zt.empty:
-            if "所属行业" in zt.columns:
-                for b in zt["所属行业"].dropna():
-                    zt_board_counter[b] = zt_board_counter.get(b, 0) + 1
-            if "涨停统计" in zt.columns:
-                pass  # 东财涨停池无板块列时跳过
 
-        # 概念行情可用 → 正常热度计算
         if boards:
             for item in boards:
-                item["limit_up_count"] = zt_board_counter.get(item.get("name", ""), 0)
+                st = zt_stats_for_board(item.get("name", ""), zt) if zt is not None and not zt.empty else None
+                if st:
+                    item.update({
+                        "limit_up_count": st["limit_up_count"],
+                        "highest_board": st["highest_board"],
+                        "ladder": st["ladder"],
+                        "stage": theme_stage(st["limit_up_count"], st["highest_board"]),
+                        "zt_leader": st["leader"] or item.get("leader"),
+                    })
+                else:
+                    item.update({"limit_up_count": 0, "highest_board": 0,
+                                 "ladder": {}, "stage": "", "zt_leader": None})
 
             # 综合热度分 = 涨幅*0.5 + 涨停家数*5（每家5分，上限50）
             def _heat(x):
@@ -213,14 +271,25 @@ class ThemeCenter:
             return boards[:top_n]
 
         # 降级：涨停池行业分布 = 题材热度（容维核心逻辑：涨停集中度 = 热点主线）
+        if zt is not None and not zt.empty and "所属行业" in zt.columns:
+            zt_board_counter = {}
+            for b in zt["所属行业"].dropna():
+                zt_board_counter[str(b)] = zt_board_counter.get(str(b), 0) + 1
+        else:
+            zt_board_counter = {}
         if zt_board_counter:
             fallback = []
             for b, cnt in sorted(zt_board_counter.items(), key=lambda x: -x[1]):
+                pool = zt[zt["所属行业"].astype(str) == b] if zt is not None else None
+                cb = [_to_int(v) for v in pool["连板数"]] if pool is not None and "连板数" in pool.columns else []
+                highest = max(cb) if cb else 1
                 fallback.append({
                     "name": b,
                     "pct_chg": None,
                     "leader": None,
                     "limit_up_count": cnt,
+                    "highest_board": highest,
+                    "stage": theme_stage(cnt, highest),
                     "heat_score": round(min(cnt * 5, 50), 1),
                     "source": "涨停池降级",
                 })
@@ -313,12 +382,23 @@ class ThemeCenter:
 
     def get_overview(self) -> Dict:
         """题材中心总览（供面板/日报）"""
+        hot = self.get_hot_themes(self.top_n)
         return {
             "new_themes": self.get_new_themes(self.top_n),
-            "hot_themes": self.get_hot_themes(self.top_n),
+            "hot_themes": hot,
             "sentiment_stocks": self.get_sentiment_stocks(),
+            "main_lines": self.get_main_lines(hot),
             "timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
+
+    def get_main_lines(self, hot_themes: Optional[List[Dict]] = None) -> List[Dict]:
+        """主线识别：涨停集中度高的题材（有真实梯队=资金一致方向）
+        按涨停家数降序取 top3，供操盘台『今日主线』展示。
+        """
+        hot = hot_themes if hot_themes is not None else self.get_hot_themes(top_n=15)
+        lines = [h for h in hot if (h.get("limit_up_count") or 0) >= 3]
+        lines.sort(key=lambda x: (x.get("limit_up_count") or 0), reverse=True)
+        return lines[:3]
 
 
 def get_theme_overview() -> Dict:

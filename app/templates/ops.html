@@ -14,6 +14,14 @@
     .drill-hint { font-size: 11px; color: var(--muted, #999); margin-left: 6px; }
     .card-title { font-size: 16px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
 
+    /* 盘面定性 banner */
+    .regime-banner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+                     border-left: 4px solid #d32f2f; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; }
+    .regime-tag { color: #fff; font-weight: 700; font-size: 17px; padding: 4px 14px; border-radius: 6px; flex-shrink: 0; }
+    .regime-reasons { font-size: 12px; color: #888; margin-top: 3px; }
+    .badge-stage { background: #fff3e0; color: #e65100; }
+    .badge-stage-strong { background: #ffebee; color: #b71c1c; }
+
     /* 温度仪表 */
     .temp-hero { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
     .temp-circle { width: 120px; height: 120px; border-radius: 50%; display: flex; flex-direction: column;
@@ -84,9 +92,11 @@
         </div>
     </div>
 
-    <!-- 市场温度 -->
+    <!-- 市场温度 + 盘面定性（真操盘手内核） -->
     <div class="card">
-        <div class="card-title">🌡️ 市场温度计（判大势）</div>
+        <div class="card-title">🎯 盘面定性（今天能不能干）</div>
+        <div id="regime-area" class="loading">加载中...</div>
+        <div class="card-title" style="margin-top:16px">🌡️ 市场温度计（判大势 / 估值贵不贵）</div>
         <div id="temp-area" class="loading">加载中...</div>
     </div>
 
@@ -236,6 +246,9 @@ async function loadOverview() {
         // 数据状态栏（v3.1）
         renderDataStatus(d);
 
+        // 盘面定性（真操盘手内核）
+        renderRegime(d);
+
         // 温度
         const t = d.temperature || {};
         const temp = t.temperature ?? '-';
@@ -272,15 +285,18 @@ async function loadOverview() {
         ].map(([k, v]) => `<div class="stat-card"><div class="v">${v}</div><div class="k">${k}</div></div>`).join('');
         document.getElementById('bullbear-area').innerHTML = bbCards;
 
-        // 题材热点
+        // 题材热点（含阶段/涨停梯队）
         const hot = (d.themes?.hot_themes || []).slice(0, 6);
         document.getElementById('theme-area').innerHTML = hot.length ? `
             <div class="scroll-x">
             ${hot.map(x => `
                 <div class="theme-item clickable-card" onclick="location.href='/theme/${encodeURIComponent(x.name)}'" title="点击查看 ${esc(x.name)} 成分股">
                     <div>
-                        <div class="theme-name">${esc(x.name)} <span class="${parseFloat(x.pct_chg) >= 0 ? 'up' : 'down'}">${fmtPct(x.pct_chg)}</span><span class="drill-hint">›</span></div>
-                        <div class="theme-leader">领涨：${esc(x.leader || '—')} ${x.leader_pct ? fmtPct(x.leader_pct) : ''} ｜ 热度 ${x.heat_score ?? '-'}</div>
+                        <div class="theme-name">${esc(x.name)} <span class="${parseFloat(x.pct_chg) >= 0 ? 'up' : 'down'}">${fmtPct(x.pct_chg)}</span>
+                        ${x.stage ? `<span class="badge ${x.stage === '主升' || x.stage === '高潮' ? 'badge-stage-strong' : 'badge-stage'}">${esc(x.stage)}</span>` : ''}
+                        ${x.limit_up_count ? `<span class="badge badge-buy">${x.limit_up_count}家涨停</span><span style="font-size:11px;color:#999">最高${x.highest_board}板</span>` : ''}
+                        <span class="drill-hint">›</span></div>
+                        <div class="theme-leader">领涨：${esc(x.zt_leader || x.leader || '—')} ${x.leader_pct ? fmtPct(x.leader_pct) : ''} ｜ 热度 ${x.heat_score ?? '-'}</div>
                     </div>
                 </div>`).join('')}
             </div>` : '<div class="loading">题材数据暂不可用</div>';
@@ -309,6 +325,29 @@ async function loadOverview() {
         document.getElementById('temp-area').innerHTML = '<div class="loading">数据加载失败：' + esc(e.message) + '</div>';
         toast('盘面数据加载失败 ❌', false);
     }
+}
+
+// 盘面定性 banner（真操盘手内核：今天能不能干、干几成）
+function renderRegime(d) {
+    const el = document.getElementById('regime-area');
+    if (!el) return;
+    const r = d.regime;
+    if (!r || !r.regime || r.regime === '未知') {
+        el.innerHTML = '<div class="loading">盘面定性暂不可用（数据不足）</div>';
+        return;
+    }
+    const colorMap = { '进攻': '#d32f2f', '过热': '#b71c1c', '均衡': '#f57f17', '防守': '#2e7d32', '冰点': '#1565c0' };
+    const c = colorMap[r.regime] || '#666';
+    const reasons = (r.reasons || []).map(x => esc(x)).join(' ｜ ');
+    const verdict = d.overview_verdict || r.advice || '';
+    el.innerHTML = `
+        <div class="regime-banner" style="border-color:${c};background:${c}14">
+            <div class="regime-tag" style="background:${c}">${esc(r.regime)}</div>
+            <div style="flex:1;min-width:220px">
+                <div style="font-size:14px;font-weight:600;color:#323233">${esc(verdict)}</div>
+                <div class="regime-reasons">${reasons} ｜ 建议仓位 ≤ ${Math.round((r.position_max || 0) * 10)} 成</div>
+            </div>
+        </div>`;
 }
 
 // 数据状态栏：时间戳/来源/warning（v3.1）

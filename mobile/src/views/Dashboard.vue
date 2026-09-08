@@ -17,6 +17,21 @@
       <van-notice-bar v-else-if="errorMsg" mode="link" color="#ee0a24" background="#fffbe8">
         {{ errorMsg }}
       </van-notice-bar>
+      <!-- 盘面定性（真操盘手内核：今天能不能干） -->
+      <div class="card" v-if="regime && regime.regime && regime.regime !== '未知'">
+        <div class="section-title" style="margin-top:0">🎯 盘面定性（今天能不能干）</div>
+        <div class="list-item" style="border:none;padding:0">
+          <div class="item-main">
+            <div class="item-title" style="font-size:15px">
+              <span style="color:#fff;font-weight:700;font-size:14px;padding:2px 10px;border-radius:6px;margin-right:6px"
+                    :style="{ background: regimeColor }">{{ regime.regime }}</span>
+              {{ verdict }}
+            </div>
+            <div class="item-sub">{{ (regime.reasons || []).join(' ｜ ') }} ｜ 建议仓位 ≤ {{ Math.round((regime.position_max || 0) * 10) }} 成</div>
+          </div>
+        </div>
+      </div>
+
       <!-- 市场温度 -->
       <div class="card">
         <div class="section-title" style="margin-top:0">🌡️ 市场温度计</div>
@@ -102,8 +117,11 @@
           <div class="item-main">
             <div class="item-title">{{ t.name }}
               <span :class="Number(t.pct_chg) >= 0 ? 'up' : 'down'">{{ fmtPct(t.pct_chg) }}</span>
+              <van-tag v-if="t.stage" :type="t.stage === '主升' || t.stage === '高潮' ? 'danger' : 'warning'"
+                       style="margin-left:6px">{{ t.stage }}</van-tag>
+              <van-tag v-if="t.limit_up_count" plain type="danger" style="margin-left:4px">{{ t.limit_up_count }}家涨停</van-tag>
             </div>
-            <div class="item-sub">领涨：{{ t.leader || '—' }} {{ t.leader_pct ? fmtPct(t.leader_pct) : '' }}</div>
+            <div class="item-sub">领涨：{{ t.zt_leader || t.leader || '—' }} {{ t.leader_pct ? fmtPct(t.leader_pct) : '' }}</div>
           </div>
           <div>
             <van-tag plain type="warning">热度 {{ t.heat_score }}</van-tag>
@@ -148,10 +166,17 @@ const data = ref(null)
 const quant = ref({})
 
 const temp = computed(() => data.value?.temperature || null)
+const regime = computed(() => data.value?.regime || null)
+const verdict = computed(() => data.value?.overview_verdict || regime.value?.advice || '')
 const act = computed(() => temp.value?.details?.activity || {})
 const bb = computed(() => data.value?.money?.bull_bear || {})
 const hotThemes = computed(() => data.value?.themes?.hot_themes?.slice(0, 6) || [])
 const senti = computed(() => data.value?.themes?.sentiment_stocks?.slice(0, 6) || [])
+
+const regimeColor = computed(() => {
+  const m = { '进攻': '#d32f2f', '过热': '#b71c1c', '均衡': '#f57f17', '防守': '#2e7d32', '冰点': '#1565c0' }
+  return m[regime.value?.regime] || '#666'
+})
 
 const tempColor = computed(() => {
   const t = temp.value?.temperature ?? 50

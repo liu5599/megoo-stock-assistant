@@ -86,7 +86,7 @@ def ops_overview():
         themes = themes_f.result()
         money = money_f.result()
 
-    result = clean_jsonable({
+    result: Dict = clean_jsonable({
         "temperature": temperature,
         "themes": themes,
         "money": money,
@@ -95,6 +95,26 @@ def ops_overview():
         "data_source": "东财/乐咕/涨停池多源",
         "warnings": _build_warnings(temperature, themes, money),
     })
+
+    # 盘面定性（真操盘手内核）：温度=估值贵不贵，regime=今天能不能干
+    try:
+        from analysis.market_regime import compute_regime
+        activity = (temperature or {}).get("details", {}).get("activity") or {}
+        bull_bear = (money or {}).get("bull_bear") or {}
+        regime = compute_regime(activity, bull_bear)
+        result["regime"] = regime
+
+        # 作战小结：一句话盘面定性 + 今日主线
+        lines = []
+        for ml in ((themes or {}).get("main_lines") or [])[:2]:
+            st = ml.get("stage") or ""
+            lines.append(f"{ml.get('name')}（{st}{('·' + ml.get('zt_leader') or ml.get('leader') or '') if (ml.get('stage')) else ''}）")
+        verdict = regime.get("advice", "")
+        if lines:
+            verdict += f"｜今日主线：{'、'.join(lines)}"
+        result["overview_verdict"] = verdict
+    except Exception as e:
+        logger.warning(f"盘面定性失败: {e}")
 
     # 持久化到磁盘（供重启后秒回）
     try:
