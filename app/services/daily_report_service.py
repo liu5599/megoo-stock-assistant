@@ -1,7 +1,7 @@
 """
 AI 操盘日报服务 —— 「职业经理人」每日盘面研判
 ============================================
-汇总：市场温度计 + 题材中心 + 资金追踪 + 三维决策 + 估值空间
+汇总：市场温度计 + 盘面定性(regime) + 题材中心(主线/阶段) + 资金追踪 + 三维决策 + 估值空间
 输出：结构化 Markdown 日报（职业经理人口吻）
 推送：PushPlus 微信推送（WECHAT_PUSHPLUS 环境变量）
 
@@ -16,7 +16,7 @@ import requests
 
 from utils.logger import logger
 
-PUSHPLUS_TOKEN = os.environ.get("WECHAT_PUSHPLUS", "")
+PUSHPLUS_TOKEN = os.environ.get("WECHAT_PUSHPLUS") or os.environ.get("PUSHPLUS_TOKEN", "")
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 
 # LLM 润色结果缓存：{md5(markdown): (时间戳, 润色后完整内容)}，TTL 1 小时。
@@ -53,11 +53,36 @@ class DailyReportService:
         from analysis.market_temperature import MarketTemperature
         from analysis.theme_center import ThemeCenter
         from analysis.money_flow import MoneyFlow
+        from analysis.market_regime import compute_regime
+
+        temperature = _safe(lambda: MarketTemperature().compute_temperature(), {})
+        themes = _safe(lambda: ThemeCenter(top_n=8).get_overview(), {})
+        money = _safe(lambda: MoneyFlow(top_n=8).get_overview(), {})
+
+        # 盘面定性（真操盘手内核：仓位按 regime 不按估值 zone）
+        regime = {}
+        verdict = ""
+        try:
+            regime = compute_regime(
+                (temperature or {}).get("details", {}).get("activity") or {},
+                (money or {}).get("bull_bear") or {})
+            lines = []
+            for ml in ((themes or {}).get("main_lines") or [])[:2]:
+                st = ml.get("stage") or ""
+                if st:
+                    lines.append(f"{ml.get('name')}({st}·{ml.get('zt_leader') or ml.get('leader') or ''})")
+            verdict = regime.get("advice", "")
+            if lines:
+                verdict += f"｜今日主线：{'、'.join(lines)}"
+        except Exception as e:
+            logger.warning(f"日报盘面定性失败: {e}")
 
         data = {
-            "temperature": _safe(lambda: MarketTemperature().compute_temperature(), {}),
-            "themes": _safe(lambda: ThemeCenter(top_n=8).get_overview(), {}),
-            "money": _safe(lambda: MoneyFlow(top_n=8).get_overview(), {}),
+            "temperature": temperature,
+            "themes": themes,
+            "money": money,
+            "regime": regime,
+            "overview_verdict": verdict,
             "quant": _safe(lambda: self._collect_quant(), {}),
             "stocks": self._collect_stock_signals(),
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -118,7 +143,7 @@ class DailyReportService:
     # ---------------- 模板生成 ----------------
 
     def render_markdown(self, data: Dict) -> str:
-        """渲染 Markdown 日报（模板版，不依赖 LLM）"""
+        """渲染 Markdown 日报（模板版，不依赖 LLM；已含 regime/主线/题材阶段）"""
         t = data["temperature"]
         money = data["money"]
         themes = data["themes"]
@@ -128,10 +153,31 @@ class DailyReportService:
         lines.append(f"# 🐂 megoo 职业经理人操盘日报")
         lines.append(f"\n> 生成时间：{data['timestamp']} ｜ 仅供研究参考，不构成投资建议")
 
-        # 2. 市场温度
+        # 2. 盘面定性（真操盘手内核：今天能不能干、干几成）
+        rg = data.get("regime") or {}
+        if rg.get("regime") and rg["regime"] != "未知":
+            pm = round((rg.get("position_max") or 0) * 10)
+            reasons = "；".join((rg.get("reasons") or [])[:3])
+            lines.append(f"\n## 🎯 盘面定性：**{rg.get('regime')}**（建议仓位 ≤ {pm} 成）")
+            lines.append(f"\n> {data.get('overview_verdict') or rg.get('advice', '')}")
+            if reasons:
+                lines.append(f"\n> 依据：{reasons}")
+
+        # 2.1 今日主线（涨停梯队 = 资金一致方向）
+        ml = (themes or {}).get("main_lines") or []
+        if ml:
+            lines.append(f"\n## 🎯 今日主线")
+            for x in ml[:3]:
+                leader = x.get("zt_leader") or x.get("leader") or "—"
+                ladder = "、".join(f"{k}{v}家" for k, v in (x.get("ladder") or {}).items())
+                lines.append(f"- **{x.get('name')}** {x.get('pct_chg', 0):+.2f}% ｜ {x.get('stage', '')} ｜ "
+                             f"涨停 {x.get('limit_up_count', 0)} 家 ｜ 最高 {x.get('highest_board', 0)} 板"
+                             f"{(' ｜ 梯队 ' + ladder) if ladder else ''} ｜ 龙头 {leader}")
+
+        # 3. 市场温度（估值温度：贵不贵，慢变量参考；仓位决策以第2节 regime 为准）
         zone = t.get("zone", "未知")
         temp = t.get("temperature", "-")
-        lines.append(f"\n## 🌡️ 市场温度：{temp}／100 —— {zone}")
+        lines.append(f"\n## 🌡️ 市场温度（估值）：{temp}／100 —— {zone}")
         if t.get("warning"):
             lines.append(f"\n> ⚠️ {t['warning']}")
         lines.append(f"\n> {t.get('advice', '')}")
@@ -169,9 +215,11 @@ class DailyReportService:
         hot = themes.get("hot_themes", [])
         if hot:
             for i, x in enumerate(hot[:5], 1):
-                leader = x.get("leader", "—")
+                leader = x.get("zt_leader") or x.get("leader") or "—"
+                stage = f" ｜ {x.get('stage')}" if x.get("stage") else ""
+                zt = f" ｜ 涨停 {x.get('limit_up_count', 0)} 家·最高 {x.get('highest_board', 0)} 板" if x.get("limit_up_count") else ""
                 lp = x.get("leader_pct", "")
-                lines.append(f"{i}. **{x.get('name', '')}** {x.get('pct_chg', 0):+.2f}% ｜ 领涨：{leader} {lp}% ｜ 热度 {x.get('heat_score', 0)}")
+                lines.append(f"{i}. **{x.get('name', '')}** {x.get('pct_chg', 0):+.2f}%{stage}{zt} ｜ 领涨：{leader} {lp}% ｜ 热度 {x.get('heat_score', 0)}")
         else:
             lines.append("\n- 题材数据暂不可用")
 
@@ -199,11 +247,19 @@ class DailyReportService:
             for s in data["stocks"]:
                 lines.append(f"- **{s['name']}**（{s['code']}）现价 {s['price']} ｜ 综合 {s['composite_score']} → **{s['action']}** ｜ 长线{s['long_term']} 波段{s['swing']} 短线{s['short_term']} ｜ 估值：{s['valuation_zone']}")
 
-        # 8. 职业经理人操作清单
+        # 8. 职业经理人今日操作清单（仓位按 regime，非估值 zone）
         lines.append(f"\n## 🎯 职业经理人今日操作清单")
-        lines.append(f"\n1. 仓位：{self._position_advice(zone)}")
+        rg2 = data.get("regime") or {}
+        if rg2.get("regime") and rg2["regime"] != "未知":
+            lines.append(f"1. 仓位：按盘面定性 **{rg2['regime']}**，总仓不超 {round((rg2.get('position_max') or 0) * 10)} 成；只在主线上做最强分歧买点")
+        else:
+            lines.append(f"1. 仓位：{self._position_advice(zone)}")
         lines.append(f"2. 方向：{self._direction_advice(money)}")
-        lines.append(f"3. 纪律：单笔止损≤7%，总仓位回撤≥15%强制降仓，不追高不恐慌")
+        if ml:
+            lines.append(f"3. 主线：重点跟踪 {'、'.join(x.get('name', '') for x in ml[:2])}（龙头 {ml[0].get('zt_leader') or ml[0].get('leader') or '—'}），非主线不恋战")
+            lines.append(f"4. 纪律：单笔止损≤7%，总仓位回撤≥15%强制降仓，不追高不恐慌")
+        else:
+            lines.append(f"3. 纪律：单笔止损≤7%，总仓位回撤≥15%强制降仓，不追高不恐慌")
 
         lines.append(f"\n---")
         lines.append(f"\n*本报告由 megoo股票助手自动生成，数据来自公开行情接口，仅供参考。*")
@@ -232,9 +288,10 @@ class DailyReportService:
     # ---------------- LLM 润色（可选） ----------------
 
     def enhance_with_llm(self, markdown: str) -> str:
-        """调用 DeepSeek v4-flash 生成职业经理人策略解读（无 key 时原样返回）
+        """调用 DeepSeek v4-flash 生成基金经理策略解读（无 key 时原样返回）
 
         带本地缓存：相同 markdown 1 小时内直接复用润色结果，避免重复调用 LLM。
+        模型必须基于真实盘面数据给观点式解读，禁止复述表格、禁止套话。
         """
         if not DEEPSEEK_API_KEY:
             return markdown
@@ -247,8 +304,13 @@ class DailyReportService:
 
         try:
             prompt = (
-                "你是资深私募基金经理。基于以下A股盘面数据日报，写一段300字以内的策略解读，"
-                "要求：结论先行、给出仓位和方向建议、点出风险、语气专业冷静。不要重复数据表格。\n\n"
+                "你是从业15年的A股私募基金经理，今天收盘后写操盘复盘。基于下方真实盘面日报：\n"
+                "1. 第一句直接给结论：今天市场是什么定性（进攻/均衡/防守等）、该几成仓、主攻哪个方向；\n"
+                "2. 讲清楚主线逻辑：今日主线题材处于什么阶段（发酵/主升/高潮）、龙头是谁、资金为什么选它；\n"
+                "3. 给出明天可执行动作：符合什么条件加仓/减仓，什么信号出现必须走；\n"
+                "4. 点出最可能的风险（炸板/分歧/量能/外围）；\n"
+                "全文不超过300字，语气像老兵复盘不像分析师念稿，禁止'综上所述''总体而言'等套话，"
+                "禁止编造日报里没有的数据。\n\n"
                 + markdown
             )
             resp = requests.post(
@@ -265,7 +327,7 @@ class DailyReportService:
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"]["content"]
             if content:
-                result = markdown + f"\n\n## 🧠 基金经理解读\n\n{content}"
+                result = markdown + f"\n\n## 🧠 基金经理复盘\n\n{content}"
                 _LLM_CACHE[cache_key] = (time.time(), result)
                 logger.info(f"🧠 LLM 润色完成并已缓存（缓存 {len(_LLM_CACHE)} 条）")
                 return result

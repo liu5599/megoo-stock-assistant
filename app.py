@@ -11,6 +11,18 @@ import sys
 import os
 import argparse
 
+# 加载项目根 .env（stdlib loader；不覆盖已存在的环境变量）
+_ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+if os.path.exists(_ENV_PATH):
+    with open(_ENV_PATH, encoding="utf-8") as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _, _v = _line.partition("=")
+                _k, _v = _k.strip(), _v.strip().strip('"').strip("'")
+                if _k and _k not in os.environ:
+                    os.environ[_k] = _v
+
 # 将项目根目录加入Python路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
