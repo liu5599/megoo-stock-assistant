@@ -186,8 +186,10 @@ class EastMoneyFetcher(DataFetcher):
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         adjust: str = "qfq",
+        is_index: bool = False,
     ) -> KLineData:
-        """获取历史K线（东方财富）"""
+        """获取历史K线（东方财富）。is_index=True: 指数代码（000xxx→沪1., 399xxx→深0.），
+        否则 000xxx 会被误判为深市个股（000300 被当 0.000300 → 永远失败）"""
         if end_date is None:
             end_date = datetime.now().strftime("%Y%m%d")
         if start_date is None:
@@ -201,10 +203,15 @@ class EastMoneyFetcher(DataFetcher):
         fqt = fqt_map.get(adjust, 1)
 
         secid = self._to_em_secid(code)
+        if is_index:
+            # 指数：000xxx 沪市(1.) / 399xxx 深市(0.) —— 不能走 _to_em_secid(个股规则)
+            secid = f"1.{code}" if not code.startswith("399") else f"0.{code}"
+            # 东财 push2his 对指数 K 线已被风控(立即断连) → 指数直接腾讯源(2s, 实测稳定)
+            return self._get_kline_from_tencent(code, period, start_date, end_date, adjust, True)
 
         # 东财历史K线熔断：已被风控/断连时，直接走腾讯降级，避免每只股票浪费 3 次重试
         if EastMoneyFetcher._push2his_blocked:
-            return self._get_kline_from_tencent(code, period, start_date, end_date, adjust)
+            return self._get_kline_from_tencent(code, period, start_date, end_date, adjust, is_index)
 
         data = self._get(self.KLINE_API, {
             "secid": secid,
@@ -221,7 +228,7 @@ class EastMoneyFetcher(DataFetcher):
             logger.info("🔌 东财历史K线接口熔断，后续直接走腾讯K线")
             from utils.logger import log_event
             log_event("数据源熔断", source="eastmoney_kline", action="OPEN", fallback="腾讯K线")
-            return self._get_kline_from_tencent(code, period, start_date, end_date, adjust)
+            return self._get_kline_from_tencent(code, period, start_date, end_date, adjust, is_index)
 
         rows = []
         for line in data["data"]["klines"]:
@@ -247,14 +254,18 @@ class EastMoneyFetcher(DataFetcher):
         return KLineData(code=code, name=name, df=df, period=period, adjust=adjust)
 
     def _get_kline_from_tencent(
-        self, code: str, period: str, start_date: str, end_date: str, adjust: str
+        self, code: str, period: str, start_date: str, end_date: str, adjust: str,
+        is_index: bool = False,
     ) -> KLineData:
         """腾讯K线降级源（东财 push2his 接口被风控/断连时使用）
 
         返回字段顺序: [date, open, close, high, low, volume(手)]
         """
         try:
-            symbol = ("sh" if code.startswith(("6", "5")) else "sz") + code
+            if is_index:
+                symbol = ("sh" if not code.startswith("399") else "sz") + code
+            else:
+                symbol = ("sh" if code.startswith(("6", "5")) else "sz") + code
             p_map = {"daily": "day", "weekly": "week", "monthly": "month"}
             p = p_map.get(period, "day")
             adj = {"": "", "qfq": "qfq", "hfq": "hfq"}.get(adjust, "qfq")

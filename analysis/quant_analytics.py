@@ -35,10 +35,11 @@ def _get_index_kline(code: str, days: int = 250):
     start = (pd.Timestamp.now() - pd.Timedelta(days=int(days * 1.6))).strftime("%Y%m%d")
     end = pd.Timestamp.now().strftime("%Y%m%d")
 
-    # 1. 主 fetcher
+    # 1. 指数K线直取腾讯（东财 push2his 指数被风控；复用 fetcher 实例省探测+name缓存）
     try:
-        fetcher = get_best_fetcher()
-        kl = fetcher.get_history_kline(code, "daily", start, end, "qfq")
+        from data.data_utils import get_best_fetcher_cached
+        fetcher = get_best_fetcher_cached()
+        kl = fetcher.get_history_kline(code, "daily", start, end, "qfq", is_index=True)
         if kl is not None:
             df = getattr(kl, "df", kl)
             if df is not None and not df.empty:
@@ -49,44 +50,51 @@ def _get_index_kline(code: str, days: int = 250):
     except Exception as e:
         logger.warning(f"指数K线失败(主源) {code}: {e}")
 
-    # 2. baostock 兜底（东财限频/空数据时；指数需显式 sh/sz 前缀）
-    try:
-        _INDEX_BS_MAP = {
-            "000001": "sh.000001", "000300": "sh.000300", "000016": "sh.000016",
-            "000905": "sh.000905", "000852": "sh.000852", "000688": "sh.000688",
-            "399001": "sz.399001", "399006": "sz.399006",
-        }
-        bs_code = _INDEX_BS_MAP.get(code)
-        if bs_code:
-            import baostock as bs
-            import socket as _socket
-            old = _socket.getdefaulttimeout()
-            _socket.setdefaulttimeout(10)
-            try:
-                lg = bs.login()
-                if lg.error_code == "0":
-                    # baostock 日期格式要求 YYYY-MM-DD
-                    bs_start = f"{start[:4]}-{start[4:6]}-{start[6:]}"
-                    bs_end = f"{end[:4]}-{end[4:6]}-{end[6:]}"
-                    rs = bs.query_history_k_data_plus(
-                        bs_code, "date,open,high,low,close,volume",
-                        start_date=bs_start, end_date=bs_end, frequency="d", adjustflag="2")
-                    rows = []
-                    while rs and rs.error_code == "0" and rs.next():
-                        rows.append(rs.get_row_data())
-                    bs.logout()
-                    if rows:
-                        df = pd.DataFrame(rows, columns=rs.fields)
-                        for col in ("open", "high", "low", "close", "volume"):
-                            df[col] = pd.to_numeric(df[col], errors="coerce")
-                        df["date"] = pd.to_datetime(df["date"])
-                        df = df.set_index("date").dropna(subset=["close"])
-                        logger.info(f"指数K线(baostock兜底): {code} {len(df)}行")
-                        return df
-            finally:
-                _socket.setdefaulttimeout(old)
-    except Exception as e:
-        logger.warning(f"指数K线失败(baostock) {code}: {e}")
+    # 2. baostock 兜底（东财/腾讯均不可用时；指数需显式 sh/sz 前缀）
+    return _fetch_index_bs(code, start, end)
+
+
+_BS_LOCK = __import__("threading").Lock()
+
+
+def _fetch_index_bs(code: str, start: str, end: str):
+    """baostock 指数K线（非线程安全 → 全局锁串行；quant 并行拉指数时防并发 login 崩溃）"""
+    _INDEX_BS_MAP = {
+        "000001": "sh.000001", "000300": "sh.000300", "000016": "sh.000016",
+        "000905": "sh.000905", "000852": "sh.000852", "000688": "sh.000688",
+        "399001": "sz.399001", "399006": "sz.399006",
+    }
+    bs_code = _INDEX_BS_MAP.get(code)
+    if not bs_code:
+        return None
+    import baostock as bs
+    import socket as _socket
+    with _BS_LOCK:
+        old = _socket.getdefaulttimeout()
+        _socket.setdefaulttimeout(10)
+        try:
+            lg = bs.login()
+            if lg.error_code == "0":
+                # baostock 日期格式要求 YYYY-MM-DD
+                bs_start = f"{start[:4]}-{start[4:6]}-{start[6:]}"
+                bs_end = f"{end[:4]}-{end[4:6]}-{end[6:]}"
+                rs = bs.query_history_k_data_plus(
+                    bs_code, "date,open,high,low,close,volume",
+                    start_date=bs_start, end_date=bs_end, frequency="d", adjustflag="2")
+                rows = []
+                while rs and rs.error_code == "0" and rs.next():
+                    rows.append(rs.get_row_data())
+                bs.logout()
+                if rows:
+                    df = pd.DataFrame(rows, columns=rs.fields)
+                    for col in ("open", "high", "low", "close", "volume"):
+                        df[col] = pd.to_numeric(df[col], errors="coerce")
+                    df["date"] = pd.to_datetime(df["date"])
+                    df = df.set_index("date").dropna(subset=["close"])
+                    logger.info(f"指数K线(baostock兜底): {code} {len(df)}行")
+                    return df
+        finally:
+            _socket.setdefaulttimeout(old)
     return None
 
 
@@ -99,11 +107,16 @@ class QuantAnalytics:
 
     def market_snapshot(self) -> Dict:
         """主要指数截面统计：区间收益/波动/相关性 → 市场结构"""
+        from concurrent.futures import ThreadPoolExecutor
         closes = {}
-        for code in INDEX_MAP:
-            df = _get_index_kline(code)
-            if df is not None and len(df) >= 60:
-                closes[INDEX_MAP[code]] = df["close"]
+
+        def _fetch(code):
+            return code, _get_index_kline(code)
+
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            for code, df in ex.map(_fetch, list(INDEX_MAP)):
+                if df is not None and len(df) >= 60:
+                    closes[INDEX_MAP[code]] = df["close"]
 
         if not closes:
             return {"available": False, "msg": "指数数据不可用"}
@@ -185,22 +198,30 @@ class QuantAnalytics:
         }
         result = {"styles": [], "rotation_signal": ""}
         code_map = {"沪深300": "000300", "中证1000": "000852", "创业板指": "399006", "上证50": "000016"}
-        for label, (a, b) in pairs.items():
-            code_a = code_map[a]
-            code_b = code_map[b]
-            df_a = _get_index_kline(code_a, 90)
-            df_b = _get_index_kline(code_b, 90)
-            if df_a is None or df_b is None or len(df_a) < 40 or len(df_b) < 40:
-                continue
-            ret_a = float(df_a["close"].iloc[-1] / df_a["close"].iloc[-21] - 1) * 100
-            ret_b = float(df_b["close"].iloc[-1] / df_b["close"].iloc[-21] - 1) * 100
-            result["styles"].append({
-                "pair": label,
-                "a": {"name": a, "ret_20": round(ret_a, 2)},
-                "b": {"name": b, "ret_20": round(ret_b, 2)},
-                "leader": a if ret_a > ret_b else b,
-                "gap": round(ret_a - ret_b, 2),
-            })
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _fetch_pair(label, a, b):
+            code_a, code_b = code_map[a], code_map[b]
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                fa = ex.submit(_get_index_kline, code_a, 90)
+                fb = ex.submit(_get_index_kline, code_b, 90)
+                return label, a, b, fa.result(), fb.result()
+
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            futures = [ex.submit(_fetch_pair, label, a, b) for label, (a, b) in pairs.items()]
+            for fu in futures:
+                label, a, b, df_a, df_b = fu.result()
+                if df_a is None or df_b is None or len(df_a) < 40 or len(df_b) < 40:
+                    continue
+                ret_a = float(df_a["close"].iloc[-1] / df_a["close"].iloc[-21] - 1) * 100
+                ret_b = float(df_b["close"].iloc[-1] / df_b["close"].iloc[-21] - 1) * 100
+                result["styles"].append({
+                    "pair": label,
+                    "a": {"name": a, "ret_20": round(ret_a, 2)},
+                    "b": {"name": b, "ret_20": round(ret_b, 2)},
+                    "leader": a if ret_a > ret_b else b,
+                    "gap": round(ret_a - ret_b, 2),
+                })
 
         if result["styles"]:
             signals = []

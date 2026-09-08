@@ -17,6 +17,21 @@ import numpy as np
 
 from utils.logger import logger
 
+# ── 轻量 TTL 缓存（fetcher 实例复用：探测东财 ~3s + name/连接池 跨请求保留） ──
+_fetcher_cache = {"t": 0.0, "obj": None}
+_FETCHER_TTL = 60.0
+
+
+def get_best_fetcher_cached() -> Any:
+    """60s 内复用同一 fetcher 实例（东财可用性探测 ~3s/次，不可每次请求都探测）"""
+    global _fetcher_cache
+    now = time.time()
+    if _fetcher_cache["obj"] is not None and now - _fetcher_cache["t"] < _FETCHER_TTL:
+        return _fetcher_cache["obj"]
+    f = get_best_fetcher()
+    _fetcher_cache = {"t": now, "obj": f}
+    return f
+
 # ── 缓存目录 ──
 CACHE_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
