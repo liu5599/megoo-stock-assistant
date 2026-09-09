@@ -167,8 +167,9 @@ def _rule_desc(rule: Dict) -> str:
 
 def _push(title: str, content: str) -> bool:
     try:
-        from app.services.alert_center import send_alert
-        return send_alert(title, content, level="P1", event_key=f"price:{int(time.time()//60)}")
+        from app.services.notify import send_notify
+        res = send_notify(title, content)
+        return res.get("ok", False)
     except Exception as e:
         logger.warning(f"预警推送异常: {e}")
         return False

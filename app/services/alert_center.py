@@ -48,7 +48,7 @@ def send_alert(title: str, content: str, level: str = "P1", event_key: str = "")
 
     try:
         from app.services.notify import send_notify
-        res = send_notify(title, content)
+        res = send_notify(f"[{level}] {title}", content)
         ok = res.get("ok", False)
         if ok:
             logger.info(f"告警已发送: [{level}] {title} → {res.get('channels')}")
