@@ -68,6 +68,13 @@ async def lifespan(app: FastAPI):
     _load_persisted_overview()
     threading.Thread(target=_warmup, daemon=True).start()
 
+    # 股价预警引擎（后台线程，交易时段轮询自选股）
+    try:
+        from app.services.price_alert import start_alert_thread
+        start_alert_thread()
+    except Exception as e:
+        logger.warning(f"股价预警引擎启动失败: {e}")
+
     yield
 
     # 关闭时
@@ -136,7 +143,7 @@ def create_app() -> FastAPI:
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     # 注册路由
-    from app.routers import stock, ranking, backtest, watchlist, system, pages, market, screener, ops
+    from app.routers import stock, ranking, backtest, watchlist, system, pages, market, screener, ops, alerts
     app.include_router(stock.router, prefix="/api")
     app.include_router(ranking.router, prefix="/api")
     app.include_router(backtest.router, prefix="/api")
@@ -145,6 +152,6 @@ def create_app() -> FastAPI:
     app.include_router(market.router, prefix="/api")
     app.include_router(screener.router, prefix="/api")
     app.include_router(ops.router, prefix="/api")
+    app.include_router(alerts.router, prefix="/api")
     app.include_router(pages.router)
-
     return app

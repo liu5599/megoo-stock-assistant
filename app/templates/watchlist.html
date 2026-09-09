@@ -47,6 +47,19 @@
     gap: 0.5rem;
     margin-top: 1rem;
 }
+.btn-alert { cursor: pointer; color: var(--accent); font-size: 0.85rem; margin-right: 0.5rem; }
+.btn-alert:hover { text-decoration: underline; }
+.alert-form-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-top: 0.5rem; }
+.alert-form-row select, .alert-form-row input {
+    background: var(--bg-primary); border: 1px solid var(--border);
+    color: var(--text-primary); padding: 0.4rem 0.6rem; border-radius: 6px; font-size: 0.85rem;
+}
+.rule-item { display: flex; align-items: center; gap: 0.6rem; padding: 0.35rem 0;
+              border-bottom: 1px dashed var(--border); font-size: 0.85rem; flex-wrap: wrap; }
+.rule-item:last-child { border-bottom: none; }
+.rule-badge { background: var(--accent-soft, rgba(0,122,255,.12)); color: var(--accent);
+              padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; }
+.rule-off { opacity: 0.45; }
 </style>
 {% endblock %}
 
@@ -120,7 +133,10 @@ async function loadWatchlist() {
                 <td class="price">${price}</td>
                 <td class="pct ${pctClass}">${pct}</td>
                 <td class="price">${pre}</td>
-                <td><span class="btn-remove" onclick="removeFromWL('${s.code}')" title="移除">✕</span></td>
+                <td>
+                    <span class="btn-alert" onclick="openAlertForm('${s.code}','${s.name}')">🔔 设预警</span>
+                    <span class="btn-remove" onclick="removeFromWL('${s.code}')" title="移除">✕</span>
+                </td>
             </tr>`;
         });
 
@@ -132,7 +148,17 @@ async function loadWatchlist() {
             <button class="btn btn-secondary btn-sm" onclick="location.href='/ranking'">📊 去排名</button>
         </div>`;
 
+        // 预警规则管理卡片
+        html += `<div class="card" style="margin-top:1rem;">
+            <div class="card-title">🔔 股价预警规则 <span style="font-size:0.75rem;font-weight:400;color:var(--text-muted)">(命中后 PushPlus 微信推送，同规则冷却30分钟)</span></div>
+            <div id="alert-rules-list">加载中...</div>
+            <div style="margin-top:0.8rem;font-size:0.8rem;color:var(--text-muted)">
+                交易时段(9:15-15:05)每分钟自动检查自选股；手动检查：<button class="btn btn-secondary btn-sm" onclick="manualCheck()">▶ 立即检查一次</button>
+            </div>
+        </div>`;
+
         container.innerHTML = html;
+        loadAlertRules();
     } catch(e) {
         container.innerHTML = `<div class="card" style="color:var(--red-up)">❌ 加载失败: ${e.message}</div>`;
     }
@@ -239,6 +265,94 @@ document.addEventListener('keydown', function(e) {
         addSelected();
     }
 });
+
+// ===== 股价预警 =====
+const RULE_TYPE_LABELS = {
+    'price_above': '现价 ≥ 目标价(元)', 'price_below': '现价 ≤ 目标价(元)',
+    'pct_above': '涨跌幅 ≥ X(%)', 'pct_below': '涨跌幅 ≤ X(%)',
+    'amount_above': '成交额 ≥ X(亿)', 'turnover_above': '换手率 ≥ X(%)',
+    'amplitude_above': '振幅 ≥ X(%)', 'high_above': '最高价 ≥ 目标价(元)'
+};
+let alertFormCode = null;
+let alertFormName = null;
+
+async function loadAlertRules() {
+    const box = document.getElementById('alert-rules-list');
+    try {
+        const resp = await fetch('/api/alerts/rules');
+        const data = await resp.json();
+        const rules = data.rules || [];
+        if (rules.length === 0) {
+            box.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem;">暂无规则 — 点击每行的「🔔 设预警」添加</div>';
+            return;
+        }
+        box.innerHTML = rules.map(r => `
+            <div class="rule-item ${r.enabled ? '' : 'rule-off'}">
+                <span><b>${r.code}</b> ${r.name || ''}</span>
+                <span class="rule-badge">${RULE_TYPE_LABELS[r.type] || r.type} ${r.value}</span>
+                <span style="margin-left:auto;display:flex;gap:0.4rem;align-items:center;">
+                    <button class="btn btn-secondary btn-sm" onclick="toggleAlertRule('${r.code}','${r.type}',${r.value},${!r.enabled})">${r.enabled ? '⏸ 停用' : '▶ 启用'}</button>
+                    <button class="btn btn-secondary btn-sm" style="color:var(--red-up)" onclick="deleteAlertRule('${r.code}','${r.type}',${r.value})">🗑 删除</button>
+                </span>
+            </div>`).join('');
+    } catch(e) {
+        box.innerHTML = '<div style="color:var(--red-up);font-size:0.85rem;">加载规则失败: ' + e.message + '</div>';
+    }
+}
+
+function openAlertForm(code, name) {
+    alertFormCode = code;
+    alertFormName = name;
+    const type = prompt('为 ' + code + ' ' + name + ' 设置预警\n选择类型:\n1=现价≥目标(元)  2=现价≤目标(元)  3=涨跌幅≥X(%)  4=涨跌幅≤X(%)\n5=成交额≥X(亿)  6=换手率≥X(%)  7=振幅≥X(%)  8=最高价≥目标(元)');
+    const typeMap = {'1':'price_above','2':'price_below','3':'pct_above','4':'pct_below','5':'amount_above','6':'turnover_above','7':'amplitude_above','8':'high_above'};
+    const ruleType = typeMap[type || ''];
+    if (!ruleType) { toast('已取消或类型无效 ❌', false); return; }
+    const val = prompt('输入阈值（' + RULE_TYPE_LABELS[ruleType] + '）：');
+    const num = parseFloat(val);
+    if (!(num > 0)) { toast('阈值无效 ❌', false); return; }
+    addAlertRule(code, name, ruleType, num);
+}
+
+async function addAlertRule(code, name, ruleType, value) {
+    const params = new URLSearchParams({code, name, rule_type: ruleType, value});
+    try {
+        const resp = await fetch('/api/alerts/rules?' + params.toString(), {method: 'POST'});
+        const data = await resp.json();
+        if (data.ok) { toast('预警已添加 ✅'); loadAlertRules(); }
+        else { toast('添加失败: ' + (data.detail || '') + ' ❌', false); }
+    } catch(e) { toast('添加失败 ❌', false); }
+}
+
+async function toggleAlertRule(code, ruleType, value, enabled) {
+    const params = new URLSearchParams({code, rule_type: ruleType, value, enabled: String(enabled)});
+    try {
+        await fetch('/api/alerts/rules/toggle?' + params.toString(), {method: 'POST'});
+        toast('已' + (enabled ? '启用' : '停用') + ' ✅');
+        loadAlertRules();
+    } catch(e) { toast('操作失败 ❌', false); }
+}
+
+async function deleteAlertRule(code, ruleType, value) {
+    if (!confirm(`删除规则: ${code} ${RULE_TYPE_LABELS[ruleType]} ${value}？`)) return;
+    const params = new URLSearchParams({code, rule_type: ruleType, value});
+    try {
+        const resp = await fetch('/api/alerts/rules?' + params.toString(), {method: 'DELETE'});
+        const data = await resp.json();
+        if (data.ok) { toast('规则已删除 ✅'); loadAlertRules(); }
+        else { toast('删除失败 ❌', false); }
+    } catch(e) { toast('删除失败 ❌', false); }
+}
+
+async function manualCheck() {
+    try {
+        const resp = await fetch('/api/alerts/check', {method: 'POST'});
+        const data = await resp.json();
+        if (data.ok) {
+            if (data.hits.length === 0) { toast('检查完成，未命中规则 ✅'); }
+            else { toast(`命中 ${data.hits.length} 条预警，已推送 ✅`); loadAlertRules(); }
+        } else { toast('检查失败 ❌', false); }
+    } catch(e) { toast('检查失败(行情源可能未响应) ❌', false); }
+}
 
 // ===== 页面初始化 =====
 document.addEventListener('DOMContentLoaded', loadWatchlist);
