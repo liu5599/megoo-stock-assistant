@@ -67,4 +67,12 @@ export function fetchLhb(limit = 50) {
   return request('/api/ops/lhb?limit=' + limit)
 }
 
-export default { fetchOverview, fetchStocks, fetchReport, pushReport, fetchPlans, fetchQuant, fetchPortfolioRisk, fetchStockDetail, fetchThemeDetail, fetchLhb }
+// AI 问股（同步模式，等待完整回答）
+export function fetchAsk(code, question = '', strategy = '') {
+  const params = new URLSearchParams({ code })
+  if (strategy) params.set('strategy', strategy)
+  if (question) params.set('question', question)
+  return request('/api/ask?' + params.toString(), { method: 'POST' })
+}
+
+export default { fetchOverview, fetchStocks, fetchReport, pushReport, fetchPlans, fetchQuant, fetchPortfolioRisk, fetchStockDetail, fetchThemeDetail, fetchLhb, fetchAsk }

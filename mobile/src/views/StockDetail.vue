@@ -29,6 +29,23 @@
       </van-cell-group>
     </div>
 
+    <!-- AI 问股 -->
+    <div class="card">
+      <div class="section-title" style="margin-top:0">🤖 AI 问股</div>
+      <van-field v-model="askQuestion" rows="2" autosize type="textarea"
+                 maxlength="200" show-word-limit placeholder="问这只票：现在能买吗？威科夫什么阶段？..." />
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:13px;">
+        <span style="color:#646566;flex-shrink:0;">策略</span>
+        <van-radio-group v-model="askStrategy" direction="horizontal" style="display:flex;gap:10px;">
+          <van-radio name="" icon-size="14px" style="font-size:13px">自动</van-radio>
+          <van-radio name="comprehensive" icon-size="14px" style="font-size:13px">综合诊断</van-radio>
+          <van-radio name="wyckoff" icon-size="14px" style="font-size:13px">威科夫</van-radio>
+        </van-radio-group>
+      </div>
+      <van-button type="primary" round block :loading="askLoading" @click="doAsk">🤖 开始问股</van-button>
+      <div v-if="askAnswer" class="ask-answer" style="margin-top:10px;white-space:pre-wrap;font-size:13px;line-height:1.7;background:#f7f8fa;border-radius:8px;padding:10px;color:#323233;">{{ askAnswer }}</div>
+    </div>
+
     <!-- K线图 -->
     <div class="card" v-if="kline.length">
       <div class="section-title" style="margin-top:0">📈 近90日K线</div>
@@ -95,7 +112,7 @@ import { GridComponent, TooltipComponent, DataZoomComponent } from 'echarts/comp
 import { CanvasRenderer } from 'echarts/renderers'
 
 echarts.use([CandlestickChart, GridComponent, TooltipComponent, DataZoomComponent, CanvasRenderer])
-import { fetchStockDetail } from '../api'
+import { fetchStockDetail, fetchAsk } from '../api'
 
 const route = useRoute()
 const router = useRouter()
@@ -105,8 +122,33 @@ const kline = ref([])
 const loading = ref(true)
 const errorMsg = ref('')
 const chartEl = ref(null)
+const askQuestion = ref('')
+const askStrategy = ref('')
+const askLoading = ref(false)
+const askAnswer = ref('')
 
 function goBack() { router.back() }
+
+async function doAsk() {
+  if (askLoading.value) return
+  const q = askQuestion.value.trim()
+  if (!q && !askStrategy.value) { showToast('输入问题或选策略'); return }
+  askLoading.value = true
+  askAnswer.value = ''
+  try {
+    const d = await fetchAsk(code, q, askStrategy.value)
+    if (d.ok) {
+      askAnswer.value = d.answer || (d.deterministic ? '(无LLM时确定性模板)' : '(空回答)')
+      if (d.deterministic && !d.answer) showToast('未配置 DEEPSEEK_API_KEY，显示模板诊断')
+    } else {
+      showToast(d.msg || '问股失败')
+    }
+  } catch (e) {
+    showToast('问股失败: ' + e.message)
+  } finally {
+    askLoading.value = false
+  }
+}
 
 function sigClass(s) {
   if (s === '多') return 'up'
