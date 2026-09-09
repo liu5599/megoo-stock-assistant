@@ -81,8 +81,23 @@ async def lifespan(app: FastAPI):
     logger.info("👋 megoo股票助手 Web App 关闭")
 
 
+def _load_env_file():
+    """加载项目根 .env（stdlib loader，不覆盖已存在环境变量）。
+    放 create_app 保证任何入口(uvicorn factory/app.py)都读到 LLM key。"""
+    env_path = Path(__file__).parent.parent / ".env"
+    if env_path.exists():
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, _, v = line.partition("=")
+                k, v = k.strip(), v.strip().strip('"').strip("'")
+                if k and not os.environ.get(k):
+                    os.environ[k] = v
+
+
 def create_app() -> FastAPI:
     """创建 FastAPI 应用"""
+    _load_env_file()
     app = FastAPI(
         title="megoo股票助手",
         description="沪深A股多因子选股框架 Web 应用",
@@ -143,7 +158,7 @@ def create_app() -> FastAPI:
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     # 注册路由
-    from app.routers import stock, ranking, backtest, watchlist, system, pages, market, screener, ops, alerts
+    from app.routers import stock, ranking, backtest, watchlist, system, pages, market, screener, ops, alerts, ask
     app.include_router(stock.router, prefix="/api")
     app.include_router(ranking.router, prefix="/api")
     app.include_router(backtest.router, prefix="/api")
@@ -153,5 +168,6 @@ def create_app() -> FastAPI:
     app.include_router(screener.router, prefix="/api")
     app.include_router(ops.router, prefix="/api")
     app.include_router(alerts.router, prefix="/api")
+    app.include_router(ask.router, prefix="/api")
     app.include_router(pages.router)
     return app
