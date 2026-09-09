@@ -338,25 +338,9 @@ class DailyReportService:
     # ---------------- 推送 ----------------
 
     def push(self, title: str, content: str) -> Dict:
-        """PushPlus 微信推送"""
-        if not PUSHPLUS_TOKEN:
-            return {"ok": False, "msg": "未配置 WECHAT_PUSHPLUS"}
-        try:
-            resp = requests.post(
-                "https://www.pushplus.plus/send",
-                json={
-                    "token": PUSHPLUS_TOKEN,
-                    "title": title,
-                    "content": content,
-                    "template": "markdown",
-                },
-                timeout=30,
-            )
-            data = resp.json()
-            return {"ok": data.get("code") == 200, "msg": data.get("msg", "")}
-        except Exception as e:
-            logger.error(f"PushPlus 推送失败: {e}")
-            return {"ok": False, "msg": str(e)}
+        """多通道推送（PushPlus / 企微 / 飞书，全部已配置通道）"""
+        from app.services.notify import send_notify
+        return send_notify(title, content)
 
     # ---------------- 一键生成 ----------------
 

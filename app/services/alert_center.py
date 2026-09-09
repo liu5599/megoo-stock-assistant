@@ -47,23 +47,15 @@ def send_alert(title: str, content: str, level: str = "P1", event_key: str = "")
         return False
 
     try:
-        resp = requests.post(
-            "https://www.pushplus.plus/send",
-            json={
-                "token": PUSHPLUS_TOKEN,
-                "title": f"[{level}] {title}",
-                "content": content,
-                "template": "markdown",
-            },
-            timeout=10,
-        )
-        ok = resp.status_code == 200 and '"code":200' in resp.text
+        from app.services.notify import send_notify
+        res = send_notify(title, content)
+        ok = res.get("ok", False)
         if ok:
-            logger.info(f"告警已发送: [{level}] {title}")
+            logger.info(f"告警已发送: [{level}] {title} → {res.get('channels')}")
         else:
-            logger.warning(f"告警发送失败: {resp.text[:100]}")
+            logger.warning(f"告警发送失败: {res.get('msg', '')[:100]}")
             from utils.logger import log_event
-            log_event("告警", level=level, status="FAIL", msg=resp.text[:100])
+            log_event("告警", level=level, status="FAIL", msg=str(res.get("msg", ""))[:100])
         return ok
     except Exception as e:
         logger.warning(f"告警发送异常: {e}")
