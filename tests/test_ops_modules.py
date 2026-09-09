@@ -395,7 +395,9 @@ class TestDailyReport:
         assert "40-60%" in svc._position_advice("价值中枢区")
 
     def test_push_no_token(self, monkeypatch):
-        monkeypatch.setattr("app.services.daily_report_service.PUSHPLUS_TOKEN", "")
+        for k in ("WECHAT_PUSHPLUS", "PUSHPLUS_TOKEN", "WECHAT_WEBHOOK_URL", "FEISHU_WEBHOOK_URL"):
+            monkeypatch.delenv(k, raising=False)
         svc = DailyReportService()
         result = svc.push("标题", "内容")
         assert result["ok"] is False
+        assert "未配置" in result["msg"]
