@@ -30,3 +30,8 @@ mobile/android/local.properties
 
 # 测试临时文件
 test_*_tmp.py
+
+# 本地环境/临时文件
+mobile/.env.production
+*.csv
+top20_results.csv

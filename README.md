@@ -1,250 +1,85 @@
-# 🐂 megoo股票助手 v1.0
+# 🐂 megoo股票助手
 
-**沪深A股多因子选股框架** — 技术面与基本面兼顾的量化选股助手。
+沪深 A 股**职业操盘台** —— 从「选股工具」到「私募级操盘闭环」的 AI 量化助手。
 
----
+判大势(温度+Quant) → 辨多空(资金) → 挖热点(题材) → 定买卖(三维决策+交易计划)
+→ 定风险区(估值+威科夫) → 调仓位(风控) → 验证(回测) → AI日报(PushPlus微信推送)
 
-## 📖 框架说明
-
-megoo股票助手是一个基于多因子模型的A股选股框架，采用**策略模式**实现可插拔的因子体系，支持技术面因子与基本面因子的灵活组合与加权评分。
-
-### 核心特性
-
-- ✅ **14个内置因子**：7个技术因子 + 7个基本面因子
-- ✅ **策略模式**：因子可插拔，支持自定义扩展
-- ✅ **多因子合成**：Rank/Z-Score/MinMax标准化，Winsorize异常值处理
-- ✅ **回测引擎**：支持自定义调仓周期、手续费、滑点、基准对比
-- ✅ **灵活配置**：YAML配置文件，权重可调
-- ✅ **数据缓存**：Parquet本地缓存，避免重复请求
+**技术栈**：Python 3.11 · FastAPI · Jinja2 · akshare / baostock / tushare / 东财直连 · SQLite · Vue3+Vant4+Capacitor(手机App)
 
 ---
+
+## ✨ 核心能力
+
+| 模块 | 说明 |
+|------|------|
+| 🎯 **操盘台** (`/ops`) | 市场温度计(情绪40%+量能20%+估值40%)、题材中心、资金追踪、三维决策、量化分析一站式 |
+| 🌡️ 市场温度计 | 0-100 温度 + 安全/中枢/警戒三区 + 仓位建议 |
+| 📊 Quant 量化 | 市场画像、风格轮动、风险状态、组合 VaR/夏普/最大回撤/相关性 |
+| 💰 资金追踪 | 主力榜(日/3日/5日)、敢死队、龙虎榜、多空对比（多源降级兜底） |
+| 🔥 题材中心 | 新题材/热题材挖掘、情绪龙头识别、涨停池首板/连板/炸板 |
+| 📐 三维决策 | 长线(周MA)0.4 + 波段(MACD)0.35 + 短线(动量/量比/RSI)0.25 |
+| 🏗️ 威科夫吸筹 | 区间识别、Spring 弹簧抄底、SOS 主升启动、量价行为评分 |
+| 📋 交易计划 | S/A/B/C 评级、入场区间、目标价(2:1盈亏)、止损、凯利仓位、单笔风险≤2% |
+| 🔍 动态选股 | 情绪周期、题材轮动、底部吸筹池、主线龙头池 |
+| 🔔 股价预警 | 8 类规则（价格突破/跌破/涨跌幅/成交额/换手/振幅/最高价），交易时段轮询，命中 PushPlus 微信推送，30min 冷却防轰炸 |
+| 📰 AI 操盘日报 | DeepSeek 生成操盘日报 + PushPlus 推送微信 |
+| ⏪ 回测引擎 | 自选股/策略回测，异步任务磁盘持久化，重启不丢 |
+| 📈 排行/筛选 | 技术面+基本面+资金 多因子排行、动态扫描 |
+| ⭐ 自选股 | JSON 持久化 + 实时行情 + 预警规则管理 |
+
+## 📱 客户端
+
+- **PC 网页**：FastAPI + Jinja2，浏览器访问 `/dashboard` `/ops` `/ranking` `/watchlist` 等
+- **手机 App**：`mobile/` Vue3+Vant4+Capacitor，打包 Android APK
+- **微信推送**：PushPlus（日报 + 预警 + 系统告警）
 
 ## 🚀 快速开始
 
-### 1. 环境要求
-
-- Python 3.9+
-- 依赖包见 `requirements.txt`
-
-### 2. 安装依赖
-
 ```bash
+# 1. 安装依赖
 pip install -r requirements.txt
+
+# 2. 配置环境变量（复制 .env.example 为 .env）
+DEEPSEEK_API_KEY=sk-xxx        # AI 日报用（可选，无则跳过日报）
+WECHAT_PUSHPLUS=xxx            # PushPlus token（可选，微信推送用）
+
+# 3. 启动 Web 应用（默认 8010）
+python app.py
+# 或
+cd app && uvicorn main:create_app --factory --port 8010
 ```
 
-### 3. 运行演示
+浏览器打开 `http://127.0.0.1:8010/ops` 即可使用操盘台。
+
+> **数据源**：默认免费源（东财/akshare/baostock）零配置可跑；免费源受上游限流与接口变动影响，
+> 如需稳定行情可配 Tushare token（见 `config.yaml` / `data/tushare_fetcher.py`）。
+
+## 🔧 常用 API
+
+| 路径 | 说明 |
+|------|------|
+| `GET /api/ops/overview` | 操盘台总览（温度/题材/资金/三维决策） |
+| `GET /api/ops/quant` | Quant 量化分析 |
+| `GET /api/ops/plan?codes=600519` | SABC 交易计划 |
+| `GET /api/ops/report?codes=...` | AI 操盘日报（Markdown） |
+| `POST /api/ops/report/push` | 生成并推送日报到微信 |
+| `GET/POST/DELETE /api/alerts/rules` | 股价预警规则 CRUD |
+| `POST /api/alerts/check` | 立即手动检查一次预警 |
+| `GET /api/ranking` | 股票排行 |
+| `POST /api/backtest/run` | 启动回测任务 |
+
+## 🧪 测试
 
 ```bash
-# 运行完整演示流程（推荐首次使用）
-python main.py demo
-
-# 进入交互式命令行
-python main.py cli
-
-# 查看CLI帮助
-python main.py --help
+python -m pytest tests/ -q      # 全部测试（含预警引擎 10 项）
 ```
 
----
+## 📄 免责声明
 
-## 📂 项目结构
+本项目仅供**学习与技术研究**，不构成任何投资建议。股市有风险，投资需谨慎。
+数据源来自公开接口，可能延迟、中断或存在错误；历史回测不代表未来收益。
 
-```
-megoo股票助手/
-│
-├── main.py                     # 程序入口（演示流程 + CLI）
-├── config.yaml                 # 全局YAML配置文件
-├── requirements.txt            # 依赖列表
-├── README.md                   # 项目说明
-│
-├── data/                       # 数据层
-│   ├── models.py               # 数据模型（dataclass）
-│   ├── fetcher.py              # 数据获取抽象基类（工厂模式）
-│   ├── akshare_fetcher.py      # Akshare数据源实现
-│   ├── cache.py                # SQLite + Parquet缓存引擎
-│   └── stock_manager.py        # 股票列表管理与自选股
-│
-├── factor_technical.py         # 技术因子模块（7个因子，策略模式）
-├── factor_fundamental.py       # 基本面因子模块（7个因子，策略模式）
-├── factor_combiner.py          # 多因子合成与打分模块
-├── backtest_engine.py          # 回测引擎
-│
-├── analysis/                   # 分析层
-│   ├── indicators.py           # 底层指标计算（纯数学函数）
-│   ├── technical.py            # 综合技术分析器
-│   ├── fundamental.py          # 综合基本面分析器
-│   ├── capital_flow.py         # 资金面分析器
-│   └── market_sentiment.py     # 市场情绪分析器
-│
-├── strategy/                   # 策略层
-│   ├── base_strategy.py        # 策略抽象基类
-│   ├── trend_following.py      # 趋势跟踪策略
-│   ├── mean_reversion.py       # 均值回归策略
-│   ├── multi_factor.py         # 多因子评分模型
-│   └── signal.py               # 信号生成与过滤
-│
-├── engine/                     # 推荐引擎层
-│   ├── recommendation.py       # 核心推荐编排器
-│   ├── scorer.py               # 加权评分器
-│   ├── risk.py                 # 风险评估
-│   └── ranking.py              # 排序筛选器
-│
-├── presentation/               # 展示层
-│   ├── cli.py                  # Click命令行界面
-│   ├── formatter.py            # Rich终端格式化
-│   ├── report.py               # HTML报告生成
-│   ├── colors.py               # 统一颜色方案
-│   └── templates/              # Jinja2模板
-│
-├── config/                     # 配置层
-│   ├── settings.py             # 全局配置类（支持YAML加载）
-│   └── stock_lists.py          # 内置股票列表与行业分类
-│
-├── utils/                      # 工具层
-│   ├── logger.py               # Loguru日志系统
-│   ├── helpers.py              # 通用辅助函数
-│   └── validators.py           # 输入校验
-│
-├── watchlist/                  # 自选股数据
-│   └── default_watchlist.json
-│
-└── tests/                      # 测试目录
-    ├── conftest.py
-    ├── test_data/
-    ├── test_analysis/
-    ├── test_strategy/
-    └── test_engine/
-```
+## 📝 License
 
----
-
-## 🔬 因子清单
-
-### 技术因子（7个）
-
-| 因子名称 | 计算方法 | 逻辑说明 | 方向 |
-|----------|----------|----------|------|
-| `momentum_20` | 过去20日收益率 | 趋势跟踪——强者恒强 | + |
-| `reversal_5` | 过去5日收益率（取负） | 短期超跌反弹 | - |
-| `volatility_20` | 过去20日收益率标准差 | 低波动溢价 | - |
-| `turnover_20` | 成交量/流通股本 | 流动性衡量 | + |
-| `volume_price_corr` | 价格变化与成交量变化的相关性 | 量价配合度 | + |
-| `rsi_14` | 相对强弱指标（14日） | 超买超卖均值回归 | - |
-| `ma_deviation` | 收盘价/20日均线 - 1 | 均值回归信号 | - |
-
-### 基本面因子（7个）
-
-| 因子名称 | 计算方法 | 逻辑说明 | 方向 |
-|----------|----------|----------|------|
-| `pe` | 市盈率（取负） | 低PE估值便宜 | - |
-| `pb` | 市净率（取负） | 低PB估值便宜 | - |
-| `roe` | 净资产收益率 | 高ROE盈利能力强 | + |
-| `revenue_growth` | 营收同比增长率 | 业务扩张信号 | + |
-| `profit_growth` | 净利润同比增长率 | 利润增长驱动力 | + |
-| `debt_ratio` | 资产负债率（取负） | 低负债财务健康 | - |
-| `gross_margin` | 毛利率 | 产品竞争力（护城河） | + |
-
----
-
-## ⚙️ 配置说明
-
-编辑 `config.yaml` 可自定义：
-
-```yaml
-# 数据源
-data_source:
-  primary: akshare
-  cache_enabled: true
-
-# 因子权重（以技术因子为例）
-technical_factors:
-  momentum_20:
-    enabled: true
-    weight: 0.25
-
-# 综合策略
-strategy:
-  technical_weight: 0.40    # 技术面总权重
-  fundamental_weight: 0.60   # 基本面总权重
-  top_n: 20                  # 输出前N只
-  normalization: rank         # 标准化方法: rank / zscore / minmax
-
-# 回测参数
-backtest:
-  start_date: "20250101"
-  rebalance_freq: monthly
-  commission_rate: 0.0003
-  benchmark: "000300"
-```
-
----
-
-## 🧪 演示策略
-
-默认演示策略为**技术40% + 基本面60%**混合：
-
-| 大类 | 权重 | 子因子 | 子权重 |
-|------|------|--------|--------|
-| 技术面 | 40% | 20日动量 | 1/3 |
-| | | 20日波动率（低波动高分） | 1/3 |
-| | | 量价配合度 | 1/3 |
-| 基本面 | 60% | 市盈率（低PE高分） | 1/3 |
-| | | ROE（高ROE高分） | 1/3 |
-| | | 营收增长率（高增长高分） | 1/3 |
-
-输出：综合得分最高的**前20只股票**，附带详细分析报告。
-
----
-
-## 🔧 扩展开发
-
-### 添加自定义技术因子
-
-```python
-from factor_technical import TechnicalFactor, TechnicalFactorRegistry
-
-class MyCustomFactor(TechnicalFactor):
-    def __init__(self, weight=1.0):
-        super().__init__(name="my_factor", weight=weight, direction=1)
-    
-    def calculate(self, data):
-        # 实现因子计算逻辑
-        results = {}
-        for code, df in data.items():
-            results[code] = ...  # 你的计算
-        return pd.Series(results)
-
-# 注册因子
-TechnicalFactorRegistry.register("my_factor", MyCustomFactor)
-```
-
-### 添加自定义基本面因子
-
-```python
-from factor_fundamental import FundamentalFactor, FundamentalFactorRegistry
-
-class MyFundamentalFactor(FundamentalFactor):
-    def __init__(self, weight=1.0):
-        super().__init__(name="my_fund_factor", weight=weight, direction=1)
-    
-    def calculate(self, data):
-        # 实现因子计算逻辑
-        ...
-```
-
----
-
-## ⚠️ 免责声明
-
-本工具仅供学习和研究使用，不构成任何投资建议。
-
-- 基于历史数据的回测结果不代表未来表现
-- 多因子模型存在过拟合风险
-- 投资决策应综合考虑市场环境、风险偏好等因素
-- 股市有风险，投资需谨慎
-
----
-
-## 📄 License
-
-MIT License
+[MIT](LICENSE)
