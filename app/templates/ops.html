@@ -165,6 +165,33 @@
         </div>
         <div id="report-area" style="margin-top:12px;"></div>
     </div>
+
+    <!-- AI 问股 -->
+    <div class="card">
+        <div class="card-title">🤖 AI 问股 <span style="font-size:0.75rem;font-weight:400;color:var(--text-muted)">输入代码问个股，支持综合诊断 / 威科夫吸筹等策略</span></div>
+        <div class="btn-row">
+            <input type="text" id="ask-code" placeholder="股票代码，如 600519" style="width:120px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary);color:var(--text-primary);">
+            <select id="ask-strategy" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary);color:var(--text-primary);">
+                <option value="">自动识别</option>
+                <option value="comprehensive">综合诊断</option>
+                <option value="wyckoff">威科夫吸筹</option>
+            </select>
+            <input type="text" id="ask-question" placeholder="你的问题（可选）" style="flex:1;min-width:140px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary);color:var(--text-primary);">
+            <button class="btn btn-primary" id="btn-ask" onclick="askStock()">🤖 问股</button>
+        </div>
+        <div id="ask-area" style="margin-top:12px;"></div>
+    </div>
+
+    <!-- 决策账本 -->
+    <div class="card">
+        <div class="card-title">📒 决策账本 <span style="font-size:0.75rem;font-weight:400;color:var(--text-muted)">已保存交易计划按评级回看胜率（同源收盘价，非实盘）</span></div>
+        <div class="btn-row">
+            <button class="btn btn-secondary" id="btn-ledger" onclick="loadLedger(5)">📒 加载决策账本（5日回看）</button>
+            <button class="btn btn-secondary" onclick="loadLedger(10)">10日</button>
+            <button class="btn btn-secondary" onclick="loadLedger(20)">20日</button>
+        </div>
+        <div id="ledger-area" style="margin-top:12px;"></div>
+    </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -410,6 +437,81 @@ async function generateReport(push) {
     } finally {
         btn.disabled = false;
         btn.textContent = push ? '📲 生成并推送到微信' : '📰 生成操盘日报';
+    }
+}
+
+// ===== AI 问股（SSE 流式） =====
+async function askStock() {
+    const code = document.getElementById('ask-code').value.trim();
+    if (!/^\d{6}$/.test(code)) { toast('请输入6位股票代码 ❌', false); return; }
+    const strategy = document.getElementById('ask-strategy').value;
+    const question = document.getElementById('ask-question').value.trim();
+    const box = document.getElementById('ask-area');
+    const btn = document.getElementById('btn-ask');
+    btn.disabled = true; btn.textContent = '🤖 思考中...';
+    box.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem;">⏳ 正在装配真实行情数据...</div>';
+    try {
+        const params = new URLSearchParams({code});
+        if (strategy) params.set('strategy', strategy);
+        if (question) params.set('question', question);
+        const resp = await fetch('/api/ask/stream?' + params.toString(), {method: 'POST'});
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '', answer = '', summary = '';
+        box.innerHTML = '<div style="line-height:1.8;font-size:0.92rem;"><div id="ask-summary" style="color:var(--text-muted);font-size:0.8rem;margin-bottom:8px;"></div><div id="ask-answer"></div></div>';
+        while (true) {
+            const {done, value} = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, {stream: true});
+            const parts = buffer.split('\n\n');
+            buffer = parts.pop();
+            for (const part of parts) {
+                const lines = part.split('\n');
+                const ev = lines.find(l => l.startsWith('event:'))?.slice(6).trim();
+                const dataLine = lines.find(l => l.startsWith('data:'));
+                if (!dataLine) continue;
+                const data = JSON.parse(dataLine.slice(5).trim());
+                if (ev === 'meta') {
+                    box.innerHTML = `<div style="line-height:1.8;font-size:0.92rem;"><div class="regime-banner" style="border-color:#1565c0;"><b>策略：${esc(data.strategy || '综合诊断')}</b>　代码：${esc(data.code)}</div><div id="ask-summary" style="color:var(--text-muted);font-size:0.8rem;margin-bottom:8px;"></div><div id="ask-answer"></div></div>`;
+                } else if (ev === 'data' && data.summary) {
+                    document.getElementById('ask-summary').innerHTML = '📊 数据：' + esc(data.summary.replace(/\n/g, ' ｜ '));
+                } else if (ev === 'delta') {
+                    answer += data.delta || '';
+                    document.getElementById('ask-answer').innerHTML = esc(answer).replace(/\n/g, '<br>');
+                } else if (ev === 'answer') {
+                    answer = data.answer || answer;
+                    document.getElementById('ask-answer').innerHTML = '<div class="report-box">' + esc(answer).replace(/\n/g, '<br>') + '</div>';
+                } else if (ev === 'error') {
+                    toast('问股失败：' + data.error + ' ❌', false);
+                }
+            }
+        }
+        if (!answer) { toast('无回答（LLM key 未配置则走模板）❌', false); }
+    } catch (e) {
+        box.innerHTML = '<div style="color:var(--red-up)">❌ 问股失败: ' + esc(e.message) + '</div>';
+    } finally {
+        btn.disabled = false; btn.textContent = '🤖 问股';
+    }
+}
+
+// ===== 决策账本 =====
+async function loadLedger(horizon) {
+    const box = document.getElementById('ledger-area');
+    const btn = document.getElementById('btn-ledger');
+    box.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem;">⏳ 回看中（拉 K 线较慢，约 10-30s）...</div>';
+    try {
+        const r = await fetch('/api/ops/performance?horizon=' + horizon);
+        const d = await r.json();
+        if (!d.available) { box.innerHTML = '<div style="color:var(--text-muted)">' + esc(d.msg || '暂无数据') + '</div>'; return; }
+        let html = `<div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:8px;">回看 ${d.horizon_days} 日 · 有效样本 ${d.evaluated} 条 · ${d.timestamp}</div><table class="data-table"><thead><tr><th>评级</th><th>样本</th><th>胜率</th><th>平均收益</th><th>盈亏比</th><th>最大亏损</th></tr></thead><tbody>`;
+        for (const [k, v] of Object.entries(d.ratings || {})) {
+            html += `<tr><td><b>${k}</b></td><td>${v.samples}</td><td class="${v.win_rate >= 50 ? 'up' : 'down'}">${v.win_rate}%</td><td class="${v.avg_return >= 0 ? 'up' : 'down'}">${v.avg_return}%</td><td>${v.profit_loss_ratio}</td><td class="down">${v.max_loss}%</td></tr>`;
+        }
+        html += '</tbody></table><div style="font-size:0.75rem;color:var(--text-muted);margin-top:6px;">⚠️ 同源收盘价回看，非实盘收益记录</div>';
+        box.innerHTML = html;
+    } catch (e) {
+        box.innerHTML = '<div style="color:var(--red-up)">❌ 加载失败: ' + esc(e.message) + '</div>';
     }
 }
 
