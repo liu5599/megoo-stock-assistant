@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, Query
 
 from utils.logger import logger
+from analysis._cache import ttl_cache
 
 router = APIRouter(prefix="/ops", tags=["ops"])
 
@@ -356,20 +357,25 @@ def ops_theme_detail(board_name: str):
     })
 
 
-@router.get("/quant")
-def ops_quant():
-    """Quant 量化大数据分析：市场画像/风格轮动/风险状态/组合风险"""
+@ttl_cache(1800)
+def _quant_cached():
+    """Quant 汇总结果缓存（SWR）：冷启动 22s 只付一次，此后秒回+后台刷新"""
     from analysis.market_temperature import clean_jsonable
     from analysis.quant_analytics import QuantAnalytics
 
     q = QuantAnalytics()
-    result = {
+    return clean_jsonable({
         "market": q.market_snapshot(),
         "style": q.style_rotation(),
         "risk": q.risk_regime(),
         "timestamp": __import__("time").strftime("%Y-%m-%d %H:%M:%S"),
-    }
-    return clean_jsonable(result)
+    })
+
+
+@router.get("/quant")
+def ops_quant():
+    """Quant 量化大数据分析：市场画像/风格轮动/风险状态/组合风险"""
+    return _quant_cached()
 
 
 @router.get("/portfolio/risk")

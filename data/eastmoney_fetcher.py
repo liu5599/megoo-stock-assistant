@@ -319,16 +319,14 @@ class EastMoneyFetcher(DataFetcher):
         is_index: bool = False,
     ) -> KLineData:
         """末级兜底：东财+腾讯K线都不可用时走 baostock（唯一稳定含当日数据的免费通道）。
-        仅支持个股日线；指数(000xxx/399xxx)与周/月线不兜底，保持空返回。
+        支持个股与指数(000xxx/399xxx 显式前缀)、日/周/月线。
         ponytail: 串行锁全局粒度，个股量级(≤8)够用；吞吐上来再分片锁。
         """
-        if period != "daily" or is_index:
-            return KLineData(code=code, period=period, adjust=adjust)
         try:
             from data.baostock_fetcher import BaostockFetcher
             with _BS_RLOCK:
                 bs_fetcher = BaostockFetcher(timeout=12)
-                return bs_fetcher.get_history_kline(code, period, start_date, end_date, adjust)
+                return bs_fetcher.get_history_kline(code, period, start_date, end_date, adjust, is_index)
         except Exception as e:
             logger.debug(f"baostock K线兜底失败 {code}: {e}")
             return KLineData(code=code, period=period, adjust=adjust)
@@ -399,46 +397,42 @@ class EastMoneyFetcher(DataFetcher):
             return None
 
     def get_market_sentiment(self) -> MarketSentimentData:
-        """获取市场情绪（东方财富全市场统计）"""
+        """获取市场情绪：乐咕真实涨跌家数统计（与 ops_overview 温度计同源、共享300s缓存）"""
         try:
-            # 获取全市场涨跌统计
-            data = self._get(self.EASTMONEY_API, {
-                "pn": "1", "pz": "1",
-                "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
-                "fields": "f2,f3,f4,f12,f14",
-            })
-            # 获取涨停跌停数据
-            up_data = self._get(self.EASTMONEY_API, {
-                "pn": "1", "pz": "1",
-                "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
-                "fields": "f2,f104,f105,f106",
-            })
+            from analysis.market_temperature import fetch_market_activity
+            act = fetch_market_activity()
+            if act:
+                def _n(*keys):
+                    for k in keys:
+                        try:
+                            v = float(act.get(k, 0) or 0)
+                            if v > 0:
+                                return int(v)
+                        except Exception:
+                            pass
+                    return 0
 
-            advance = decline = flat = limit_up = limit_down = 0
-            # 粗略估算（每日涨跌约各半）
-            total = 5000
-            try:
-                if data and "data" in data:
-                    total = data["data"].get("total", 5000)
-            except:
-                pass
-
-            # 简化的市场热度估算（真实涨跌家数暂未接入，此处为估算值）
-            heat = 50  # 中性
-
-            return MarketSentimentData(
-                advance_count=advance or int(total * 0.48),
-                decline_count=decline or int(total * 0.48),
-                flat_count=flat or int(total * 0.04),
-                limit_up_count=limit_up or 50,
-                limit_down_count=limit_down or 10,
-                market_heat_index=heat,
-                source="东财·估算",
-                estimated=True,
-            )
+                advance = _n("上涨", "上涨家数")
+                decline = _n("下跌", "下跌家数")
+                flat = _n("平盘")
+                limit_up = _n("涨停", "涨停家数")
+                limit_down = _n("跌停", "跌停家数")
+                total = advance + decline + flat
+                heat = round((advance / total) * 100, 1) if total else 50.0
+                return MarketSentimentData(
+                    advance_count=advance, decline_count=decline, flat_count=flat,
+                    limit_up_count=limit_up, limit_down_count=limit_down,
+                    market_heat_index=heat, source="乐咕·市场活跃度", estimated=False,
+                )
         except Exception as e:
             logger.debug(f"市场情绪获取失败: {e}")
-            return MarketSentimentData(source="获取失败", estimated=True)
+
+        # 无真实统计时诚实返回 0，前端显示"暂无数据"——绝不伪造对称涨跌(2667/2667 假真实)
+        return MarketSentimentData(
+            advance_count=0, decline_count=0, flat_count=0,
+            limit_up_count=0, limit_down_count=0,
+            market_heat_index=50, source="涨跌统计暂不可用", estimated=True,
+        )
 
     # ======================== 股票列表 ========================
 

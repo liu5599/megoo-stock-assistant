@@ -68,22 +68,31 @@ class BaostockFetcher(DataFetcher):
     # ======================== K线数据 ========================
 
     def get_history_kline(self, code: str, period="daily",
-                          start_date=None, end_date=None, adjust="qfq") -> KLineData:
-        """获取K线，peTTM/pbMRQ字段自动缓存供财务分析"""
+                          start_date=None, end_date=None, adjust="qfq",
+                          is_index: bool = False) -> KLineData:
+        """获取K线，peTTM/pbMRQ字段自动缓存供财务分析
+        is_index=True: 指数代码显式 sh./sz. 前缀(000300→sh.000300, 399→sz.)，
+        否则会被当深市个股。period: daily/weekly/monthly
+        """
         self._ensure_login()
 
         end = f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:8]}" if end_date else datetime.now().strftime("%Y-%m-%d")
         start = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:8]}" if start_date else (datetime.now() - timedelta(days=400)).strftime("%Y-%m-%d")
 
         adjust_map = {"": "1", "qfq": "2", "hfq": "3"}
-        bs_code = self._to_bs_code(code)
+        freq_map = {"daily": "d", "weekly": "w", "monthly": "m"}
+        frequency = freq_map.get(period, "d")
+        if is_index:
+            bs_code = ("sh." if not code.startswith("399") else "sz.") + code
+        else:
+            bs_code = self._to_bs_code(code)
         fields = "date,open,close,high,low,volume,amount,turn,pctChg,peTTM,pbMRQ"
 
         try:
             old = socket.getdefaulttimeout()
             socket.setdefaulttimeout(self.timeout)
             rs = bs.query_history_k_data_plus(bs_code, fields, start_date=start, end_date=end,
-                                               frequency="d", adjustflag=adjust_map.get(adjust, "2"))
+                                              frequency=frequency, adjustflag=adjust_map.get(adjust, "2"))
             socket.setdefaulttimeout(old)
             if not rs or rs.error_code != '0':
                 return KLineData(code=code, period=period, adjust=adjust)
@@ -99,14 +108,16 @@ class BaostockFetcher(DataFetcher):
                 df[col] = df[col].apply(self._to_float)
             df["volume"] = df["volume"] / 100
 
-            # 缓存PE/PB
-            last = data[-1]
-            pe = self._to_optional_float(last[9])
-            pb = self._to_optional_float(last[10])
-            if pe or pb:
-                self._pe_pb_cache[code] = {"pe": pe, "pb": pb}
+            # 缓存PE/PB（个股才有意义，指数无 PE/PB 字段）
+            if not is_index:
+                last = data[-1]
+                pe = self._to_optional_float(last[9])
+                pb = self._to_optional_float(last[10])
+                if pe or pb:
+                    self._pe_pb_cache[code] = {"pe": pe, "pb": pb}
 
-            return KLineData(code=code, name=self.get_stock_name(code), df=df, period=period, adjust=adjust)
+            name = code if is_index else self.get_stock_name(code)
+            return KLineData(code=code, name=name, df=df, period=period, adjust=adjust)
         except Exception:
             return KLineData(code=code, period=period, adjust=adjust)
 

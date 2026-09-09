@@ -57,6 +57,13 @@ async def lifespan(app: FastAPI):
             logger.info("🔥 操盘台数据预热完成")
         except Exception as e:
             logger.warning(f"操盘台预热失败: {e}")
+        # quant 冷启动 20s+：启动后台预热一次，用户首次打开即秒回
+        try:
+            from app.routers.ops import ops_quant
+            ops_quant()
+            logger.info("🔥 Quant 数据预热完成")
+        except Exception as e:
+            logger.warning(f"Quant 预热失败: {e}")
 
     _load_persisted_overview()
     threading.Thread(target=_warmup, daemon=True).start()
