@@ -47,21 +47,25 @@ _load()
 
 
 def set_open(source: str):
-    """触发熔断（记录时间）"""
+    """触发熔断（记录时间）；只在状态翻转时记日志，避免重复 OPEN 噪声"""
+    was_open = _state.get(source, {}).get("open", False)
     with _lock:
         _state[source] = {"open": True, "opened_at": time.time()}
         _save()
-    from utils.logger import log_event
-    log_event("数据源熔断", source=source, action="OPEN")
+    if not was_open:
+        from utils.logger import log_event
+        log_event("数据源熔断", source=source, action="OPEN")
 
 
 def set_closed(source: str):
-    """解除熔断"""
+    """解除熔断；只在实际解除(此前处于熔断)时记 CLOSE，成功直连不再刷日志"""
+    was_open = _state.get(source, {}).get("open", False)
     with _lock:
         _state.pop(source, None)
         _save()
-    from utils.logger import log_event
-    log_event("数据源熔断", source=source, action="CLOSE")
+    if was_open:
+        from utils.logger import log_event
+        log_event("数据源熔断", source=source, action="CLOSE")
 
 
 def is_open(source: str) -> bool:

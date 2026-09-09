@@ -7,6 +7,7 @@
 import os
 import json
 import time
+import threading
 import requests
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
@@ -18,6 +19,9 @@ from data.models import (
     CapitalFlowData, MarketSentimentData,
 )
 from utils.logger import logger
+
+# baostock 非线程安全：全进程串行锁（东财/腾讯K线全挂时兜底用，防 ThreadPool 并发 login 崩溃）
+_BS_RLOCK = threading.RLock()
 
 # 配置SSL证书（合并系统根证书，解决本机SSL拦截问题）
 from utils.ssl_setup import setup_ssl
@@ -44,18 +48,28 @@ class EastMoneyFetcher(DataFetcher):
         self._all_stocks_cache = None
 
     def _get(self, url, params=None, retries=3):
-        """带重试的 GET 请求"""
+        """带重试的 GET 请求；push2 主节点失败(502/风控/超时)时自动切 push2delay 备用节点。
+        ponytail: 备用节点硬编码 push2delay，push2his(K线)走已存在的 blocked→腾讯降级路径不受影响。
+        """
+        urls = [url]
+        if "push2.eastmoney.com" in url:
+            urls.append(url.replace("push2.eastmoney.com", "push2delay.eastmoney.com"))
         last_err = None
-        for i in range(retries):
-            try:
-                r = self._session.get(url, params=params, timeout=self.timeout)
-                if r.status_code == 200:
-                    return r.json()
-                logger.debug(f"HTTP {r.status_code}: {url[:60]}")
-            except Exception as e:
-                last_err = e
-                if i < retries - 1:
-                    time.sleep(0.5 * (i + 1))
+        for u in urls:
+            for i in range(retries):
+                try:
+                    r = self._session.get(u, params=params, timeout=self.timeout)
+                    if r.status_code == 200:
+                        j = r.json()
+                        if j is not None:
+                            return j
+                    logger.debug(f"HTTP {r.status_code}: {u[:60]}")
+                    if 500 <= r.status_code < 600:
+                        break  # 服务器已死/被风控，重试同主机无意义 → 立即切备用节点
+                except Exception as e:
+                    last_err = e
+                    if i < retries - 1:
+                        time.sleep(0.5 * (i + 1))
         if last_err:
             logger.debug(f"请求失败 {url[:60]}: {last_err}")
         return None
@@ -279,7 +293,8 @@ class EastMoneyFetcher(DataFetcher):
             key = f"{adj}{p}" if adj else p  # qfqday / day / hfqday
             arr = node.get(key) or node.get(p) or []
             if not arr:
-                return KLineData(code=code, period=period, adjust=adjust)
+                # 腾讯也挂(空/风控)时，末级兜底 baostock（唯一稳定含当日数据的通道）
+                return self._kline_fallback_baostock(code, period, start_date, end_date, adjust, is_index)
 
             rows = []
             for it in arr:
@@ -297,6 +312,25 @@ class EastMoneyFetcher(DataFetcher):
             return KLineData(code=code, name=self.get_stock_name(code), df=df, period=period, adjust=adjust)
         except Exception as e:
             logger.debug(f"腾讯K线降级失败 {code}: {e}")
+            return self._kline_fallback_baostock(code, period, start_date, end_date, adjust, is_index)
+
+    def _kline_fallback_baostock(
+        self, code: str, period: str, start_date: str, end_date: str, adjust: str,
+        is_index: bool = False,
+    ) -> KLineData:
+        """末级兜底：东财+腾讯K线都不可用时走 baostock（唯一稳定含当日数据的免费通道）。
+        仅支持个股日线；指数(000xxx/399xxx)与周/月线不兜底，保持空返回。
+        ponytail: 串行锁全局粒度，个股量级(≤8)够用；吞吐上来再分片锁。
+        """
+        if period != "daily" or is_index:
+            return KLineData(code=code, period=period, adjust=adjust)
+        try:
+            from data.baostock_fetcher import BaostockFetcher
+            with _BS_RLOCK:
+                bs_fetcher = BaostockFetcher(timeout=12)
+                return bs_fetcher.get_history_kline(code, period, start_date, end_date, adjust)
+        except Exception as e:
+            logger.debug(f"baostock K线兜底失败 {code}: {e}")
             return KLineData(code=code, period=period, adjust=adjust)
 
     # ======================== 财务数据（同花顺） ========================

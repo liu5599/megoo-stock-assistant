@@ -230,7 +230,8 @@ class ThemeCenter:
         for r in rows:
             if "net_flow" in r and r.get("net_flow") is not None and not pd.isna(r.get("net_flow")):
                 try:
-                    r["net_flow_yi"] = round(float(r["net_flow"]) / 1e8, 2)  # 万元→亿
+                    # 新浪概念资金流源单位已是亿元，直接透传（勿再 /1e8 → 会变 0.00 亿）
+                    r["net_flow_yi"] = round(float(r["net_flow"]), 2)
                 except Exception:
                     r["net_flow_yi"] = None
         return rows

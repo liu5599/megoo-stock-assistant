@@ -128,7 +128,7 @@ async function runBacktest() {
     for (const s of strategies) {
         const params = new URLSearchParams({...baseParams, tech_weight: s.tech_w, fund_weight: s.fund_w});
         try {
-            const resp = await fetch('/api/backtest/run', {method:'POST', body:params});
+            const resp = await fetch('/api/backtest/run?' + params.toString(), {method:'POST'});
             const {task_id} = await resp.json();
             taskIds.push({id: s.id, task_id, config: s});
         } catch(e) { console.error(e); }

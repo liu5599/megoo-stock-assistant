@@ -119,7 +119,9 @@ class MarketService:
             return None
 
         changes = []
-        for s in sector_stocks[:1]:  # 每行业取 1 只代表股
+        # 每行业 1 只代表股：东财/腾讯K线全挂时兜底 baostock 亦能返当日数据，
+        # 故不再放大样本(baostock 全局串行锁，样本多=冷启动分钟级)
+        for s in sector_stocks[:1]:
             try:
                 kline = self.fetcher.get_history_kline(s["code"], period="daily", adjust="")
                 if kline and not kline.df.empty and len(kline.df) > 1:

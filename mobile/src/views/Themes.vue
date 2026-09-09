@@ -16,7 +16,7 @@
               <div class="item-sub">指数 {{ t.index_price ?? '-' }}</div>
             </div>
             <div style="text-align:right">
-              <div class="item-title up">{{ fmtYi(t.net_flow) }}</div>
+              <div class="item-title up">{{ fmtNetYi(t.net_flow) }}</div>
               <div class="item-sub">净流入(亿)</div>
             </div>
           </div>
@@ -91,6 +91,12 @@ function goTheme(name) {
 function fmtYi(v) {
   const n = parseFloat(v || 0)
   return (n / 1e8).toFixed(2)
+}
+// 新浪概念资金流源单位已是亿元（勿 /1e8）；封板资金等东财字段单位是元才用 fmtYi
+function fmtNetYi(v) {
+  if (v === null || v === undefined || isNaN(parseFloat(v))) return '-'
+  const n = parseFloat(v)
+  return (n > 0 ? '+' : '') + n.toFixed(2)
 }
 
 async function load() {

@@ -149,6 +149,7 @@ class MoneyFlow:
         }
         df = df.rename(columns={k: v for k, v in rename.items() if k in df.columns})
         # 直连源只提供今日数据：3日/5日请求时降级用今日列
+        degraded_today = False
         if "main_net" not in df.columns and "今日主力净流入-净额" in df.columns:
             df = df.rename(columns={
                 "今日主力净流入-净额": "main_net",
@@ -156,6 +157,7 @@ class MoneyFlow:
                 "今日涨跌幅": "pct_chg",
             })
             if indicator != "今日":
+                degraded_today = True
                 logger.info(f"资金流 {indicator} 榜使用今日直连数据（限频降级）")
         if "main_net" not in df.columns:
             return []
@@ -165,7 +167,8 @@ class MoneyFlow:
         df = df.dropna(subset=["main_net"]).sort_values("main_net", ascending=False)
         rows = df.head(self.top_n).to_dict("records")
         for r in rows:
-            r["indicator"] = indicator
+            # 顶替数据必须显式标注，禁止冒充 3日/5日 累计（静默假数据会误导操盘决策）
+            r["indicator"] = f"{indicator}(今日数据顶替)" if degraded_today else indicator
         return rows
 
     # ---------------- 1. 主力资金 ----------------
