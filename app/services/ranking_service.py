@@ -16,6 +16,7 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from utils.logger import logger
+from utils.task_store import load_tasks, save_tasks
 
 # 导入共享数据函数（非侵入式，不再依赖 main.py）
 from data.data_utils import fetch_stock_data, fetch_financial_data, build_demo_strategy
@@ -74,8 +75,11 @@ class RankingService:
         self.fetcher = fetcher
         self.raw_fetcher = raw_fetcher
         self.config = config
-        self._tasks: Dict[str, Dict] = {}
+        self._tasks: Dict[str, Dict] = load_tasks("ranking")
         RankingService._instance = self
+
+    def _persist(self):
+        save_tasks("ranking", self._tasks)
 
     @classmethod
     def instance(cls):
@@ -237,6 +241,7 @@ class RankingService:
                     "status": "error", "error": f"K线数据不足（{len(kline_data)}只有效），可能非交易时间",
                     "progress": 100, "step": "失败"
                 }
+                self._persist()
                 return
 
             valid_codes = list(kline_data.keys())
@@ -345,6 +350,7 @@ class RankingService:
                         "status": "error", "error": "筛选后无股票符合条件，请放宽筛选条件",
                         "progress": 100, "step": "筛选后无结果"
                     }
+                    self._persist()
                     return
 
             # 构建结果
@@ -428,6 +434,7 @@ class RankingService:
                 },
             }
             logger.info(f"排名计算完成: {len(result_list)}只")
+            self._persist()
 
         except Exception as e:
             logger.exception(f"排名计算失败: {e}")
@@ -437,11 +444,13 @@ class RankingService:
                 "progress": 0,
                 "step": "失败",
             }
+            self._persist()
 
     def _update(self, task_id, progress, step):
         if task_id in self._tasks:
             self._tasks[task_id]["progress"] = progress
             self._tasks[task_id]["step"] = step
+            self._persist()
 
     @staticmethod
     def _parse_weights(weights_str: str) -> dict:

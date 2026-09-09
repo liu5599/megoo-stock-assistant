@@ -8,10 +8,15 @@ from fastapi import APIRouter, Query
 
 from app.dependencies import get_fetcher, get_raw_fetcher
 from utils.logger import logger
+from utils.task_store import load_tasks, save_tasks
 
 router = APIRouter(prefix="/screener", tags=["screener"])
 
-_tasks: dict = {}
+_tasks: dict = load_tasks("screener")
+
+
+def _persist_tasks():
+    save_tasks("screener", _tasks)
 
 
 @router.get("/surge")
@@ -94,9 +99,11 @@ async def run_surge(
                 "results": results, "total": len(results),
                 "market": market,
             })
+            _persist_tasks()
         except Exception as e:
             logger.error(f"surge错误: {e}\n{traceback.format_exc()}")
             _tasks[task_id].update({"status": "error", "step": "失败", "error": str(e)})
+            _persist_tasks()
 
     asyncio.create_task(_run())
     return {"task_id": task_id, "status": "running"}

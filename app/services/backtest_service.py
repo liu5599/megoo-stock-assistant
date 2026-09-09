@@ -16,6 +16,7 @@ if _PROJECT_ROOT not in sys.path:
 from data.data_utils import fetch_stock_data, fetch_financial_data
 from backtest_engine import BacktestEngine, BacktestConfig
 from utils.logger import logger
+from utils.task_store import load_tasks, save_tasks
 
 
 class BacktestService:
@@ -27,8 +28,11 @@ class BacktestService:
         self.fetcher = fetcher
         self.raw_fetcher = raw_fetcher
         self.config = config
-        self._tasks: Dict[str, Dict] = {}
+        self._tasks: Dict[str, Dict] = load_tasks("backtest")
         BacktestService._instance = self
+
+    def _persist(self):
+        save_tasks("backtest", self._tasks)
 
     @classmethod
     def instance(cls):
@@ -85,6 +89,7 @@ class BacktestService:
                 self._tasks[task_id] = {
                     "status": "error", "error": "K线数据不足", "progress": 100, "step": "失败"
                 }
+                self._persist()
                 return
 
             # 获取财务数据（供信号函数里的基本面因子使用）
@@ -217,6 +222,7 @@ class BacktestService:
             }
 
             logger.info(f"回测完成: 总收益 {result.total_return:.2f}%, 夏普 {result.sharpe_ratio:.2f}")
+            self._persist()
 
         except Exception as e:
             logger.exception(f"回测失败: {e}")
@@ -226,11 +232,13 @@ class BacktestService:
                 "progress": 0,
                 "step": "失败",
             }
+            self._persist()
 
     def _update(self, task_id, progress, step):
         if task_id in self._tasks:
             self._tasks[task_id]["progress"] = progress
             self._tasks[task_id]["step"] = step
+            self._persist()
 
     def get_task_status(self, task_id: str) -> Optional[dict]:
         task = self._tasks.get(task_id)

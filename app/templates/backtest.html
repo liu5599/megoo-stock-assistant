@@ -183,17 +183,21 @@ async function showResults(taskIds) {
 
     // 获取所有结果
     const results = [];
+    let skipped = 0;
     for (const t of taskIds) {
         if (t.error) continue;
         try {
             const resp = await fetch(`/api/backtest/result/${t.task_id}`);
             const data = await resp.json();
             if (data.status === 'done') results.push({...data, color: colors[parseInt(t.id)-1], label: `策略${t.id}`, config: t.config});
-        } catch(e) {}
+            else skipped++;
+        } catch(e) { skipped++; }
     }
 
     if (results.length === 0) {
-        container.innerHTML = '<div class="card">无有效回测结果</div>';
+        container.innerHTML = '<div class="card">无有效回测结果'
+            + (skipped > 0 ? '（任务可能因服务重启失效，请点击上方 <b>🚀 开始回测</b> 重新生成）' : '')
+            + '</div>';
         return;
     }
 
