@@ -128,7 +128,7 @@ def _safe_call(func, *args, retries: int = 1, **kwargs):
 
 # 东财概念板块熔断（新浪主源失败时才触发东财降级，失败一次后不再重试）
 _eastmoney_board_blocked = False
-# 东财概念成分股熔断（涨停池降级；连续失败 2 次后不再试主源，避免 502 时段白等）
+# 东财概念成分股熔断（涨停池降级；失败 1 次即熔断——502 场景通常持续，不值得二次白等）
 _eastmoney_cons_blocked = False
 
 
@@ -199,11 +199,26 @@ def fetch_limit_down_pool(date: str = "") -> Optional[pd.DataFrame]:
     return df
 
 
+def _call_with_timeout(func, timeout: float = 12.0, *args, **kwargs):
+    """线程池限时调用：东财 502 时段 akshare 内部重试可拖 30s+，
+    这里超时即放弃（返回 None），让上层快速降级，避免用户白等。"""
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FT
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        fut = ex.submit(func, *args, **kwargs)
+        try:
+            return fut.result(timeout=timeout)
+        except FT:
+            logger.warning(f"akshare 调用超时(>{timeout}s) → 放弃降级: {getattr(func, '__name__', func)}")
+            return None
+        except Exception as e:
+            logger.warning(f"akshare 调用失败: {e}")
+            return None
+
+
 def fetch_board_cons(symbol: str) -> Optional[pd.DataFrame]:
-    """概念板块成分股"""
+    """概念板块成分股（限时 12s，超时返回 None 让上层走涨停池降级）"""
     ak = __import__("akshare", fromlist=["stock_board_concept_cons_em"])
-    df = _safe_call(ak.stock_board_concept_cons_em, symbol=symbol)
-    return df
+    return _call_with_timeout(ak.stock_board_concept_cons_em, 12.0, symbol=symbol)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -358,11 +373,10 @@ class ThemeCenter:
             logger.warning(f"题材成分获取异常 {board_name}: {e}")
             df = None
         if df is None or df.empty:
-            # 主源连续失败 N 次即熔断（避免每次都白等 30s）。类级计数跨实例共享。
+            # 失败 1 次即熔断——502 场景通常持续，不值得二次白等主源
+            _eastmoney_cons_blocked = True
             ThemeCenter._theme_fail_count += 1
-            if ThemeCenter._theme_fail_count >= 2:
-                _eastmoney_cons_blocked = True
-                logger.warning(f"题材成分连续失败{ThemeCenter._theme_fail_count}次 → 熔断东财成分源")
+            logger.warning(f"题材成分获取失败(第{ThemeCenter._theme_fail_count}次) → 熔断东财成分源")
             return self._theme_detail_fallback(board_name)
         rename = {
             "代码": "code", "名称": "name", "最新价": "price",

@@ -304,10 +304,13 @@ def ops_theme_detail(board_name: str):
     if not stocks:
         return clean_jsonable(detail)
 
-    # 对成分股 top 8 跑交易计划评级（标注"值得买入"）—— 并发执行，避免串行 10 只 × 每只 20s+
-    from concurrent.futures import ThreadPoolExecutor
+    # 对成分股 top 8 跑交易计划评级（标注"值得买入"）—— 并发 + 总超时预算
+    # K线源整体不可用时（东财502+腾讯失败+baostock挂），每只走完整降级链最坏几十秒，
+    # 这里加 20s 总预算：超时未完成的标的 rating 留空，保证接口快速返回不拖垮前端。
+    from concurrent.futures import ThreadPoolExecutor, wait
     fetcher = get_best_fetcher()
     buy_list = []
+    BUDGET = 20.0
 
     def _rate_one(s):
         code = s.get("code", "")
@@ -347,8 +350,25 @@ def ops_theme_detail(board_name: str):
             item["rating"] = "-"
             return item
 
-    with ThreadPoolExecutor(max_workers=min(5, len(stocks[:10]))) as pool:
-        enriched = [r for r in pool.map(_rate_one, stocks[:10]) if r is not None]
+    executor = ThreadPoolExecutor(max_workers=min(5, len(stocks[:10])) or 1)
+    futures = {executor.submit(_rate_one, s): s for s in stocks[:10]}
+    done, pending = wait(futures, timeout=BUDGET)
+    enriched = []
+    for fut in done:
+        try:
+            r = fut.result()
+            if r is not None:
+                enriched.append(r)
+        except Exception:
+            pass
+    for fut in pending:
+        s = futures[fut]
+        item = dict(s)
+        item["rating"] = "-"
+        item["timeout_note"] = "评级超时（数据源不可用）"
+        enriched.append(item)
+        logger.warning(f"题材成分评级超时跳过: {s.get('code')}")
+    executor.shutdown(wait=False)
     for item in enriched:
         if item.get("rating") in ("S", "A"):
             buy_list.append(item)
