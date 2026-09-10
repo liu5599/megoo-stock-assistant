@@ -335,6 +335,22 @@ class ThemeCenter:
 
         return []
 
+    def _theme_detail_ths(self, board_name: str) -> Optional[Dict]:
+        """同花顺板块成分降级（官方源，覆盖全，含价格）；不可用返回 None"""
+        try:
+            from data.ths_client import available as _ths_ok, ths_board_constituents
+            if not _ths_ok():
+                return None
+            tdf = ths_board_constituents(board_name, limit=30)
+            if tdf is not None and not tdf.empty:
+                recs = tdf.to_dict("records")
+                logger.info(f"题材成分使用同花顺降级: {board_name} {len(recs)}只")
+                return {"name": board_name, "stocks": recs,
+                        "leader": recs[0] if recs else None, "source": "同花顺"}
+        except Exception as e:
+            logger.debug(f"同花顺板块成分降级失败: {e}")
+        return None
+
     def _theme_detail_fallback(self, board_name: str) -> Dict:
         """降级：涨停池中该行业股票（稳定源）"""
         try:
@@ -370,6 +386,10 @@ class ThemeCenter:
         # 快速失败守卫：东财主源全 502 时段，akshare 单次调用可拖 30s+。
         # 用全局熔断标记：已确认东财成分不可用时直接走降级，不再试主源。
         if _eastmoney_cons_blocked:
+            # 熔断后：先试同花顺官方板块成分，再退涨停池
+            ths = self._theme_detail_ths(board_name)
+            if ths:
+                return ths
             return self._theme_detail_fallback(board_name)
         try:
             df = fetch_board_cons(board_name)
@@ -381,18 +401,10 @@ class ThemeCenter:
             _eastmoney_cons_blocked = True
             ThemeCenter._theme_fail_count += 1
             logger.warning(f"题材成分获取失败(第{ThemeCenter._theme_fail_count}次) → 熔断东财成分源")
-            # 降级1：同花顺官方板块成分（覆盖全，含价格）
-            try:
-                from data.ths_client import available as _ths_ok, ths_board_constituents
-                if _ths_ok():
-                    tdf = ths_board_constituents(board_name, limit=30)
-                    if tdf is not None and not tdf.empty:
-                        recs = tdf.to_dict("records")
-                        logger.info(f"题材成分使用同花顺降级: {board_name} {len(recs)}只")
-                        return {"name": board_name, "stocks": recs,
-                                "leader": recs[0] if recs else None, "source": "同花顺"}
-            except Exception as e:
-                logger.debug(f"同花顺板块成分降级失败: {e}")
+            # 降级1：同花顺官方板块成分
+            ths = self._theme_detail_ths(board_name)
+            if ths:
+                return ths
             # 降级2：涨停池同行业
             return self._theme_detail_fallback(board_name)
         rename = {
