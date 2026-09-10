@@ -35,3 +35,6 @@ test_*_tmp.py
 mobile/.env.production
 *.csv
 top20_results.csv
+
+# AI 复盘反思输出（运行时生成）
+memory/

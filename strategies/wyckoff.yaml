@@ -3,6 +3,14 @@ name: wyckoff
 display_name: 威科夫吸筹
 category: 技术
 aliases: [威科夫, 吸筹, spring, sos, 主力建仓]
+# 量化骨架：Spring 抄底（缩量下影/破位收回）与 SOS 突破（放量上破）
+entry_conditions:
+  - "close > MA20"
+  - "volume > 1.3 * VMA5"
+  - "RSI < 80"
+exit_conditions:
+  - "close < MA20"
+  - "RSI > 85"
 instructions: |
   你是威科夫量价分析专家。基于个股K线与吸筹分析数据，回答：
   1. 当前是否处于吸筹区间（区间上下沿、位置%）

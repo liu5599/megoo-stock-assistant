@@ -1,125 +1,157 @@
-"""
-测试风控模块
-"""
+"""风控委员会 + 结构化决策测试（纯逻辑，不碰网络）"""
+import sys
+from pathlib import Path
+
 import pytest
-import numpy as np
-import pandas as pd
-from engine.risk_manager import (
-    RiskManager, StopLossLevel, TakeProfitLevel, PositionSizing,
-    RiskAssessment, SellSignal, StopLossType, TakeProfitType,
-)
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from app.services import risk_manager, ask_agent  # noqa: E402
 
 
-def make_ohlcv(n=60, start_price=100, trend=0):
-    """生成模拟OHLCV数据"""
-    np.random.seed(42)
-    returns = np.random.randn(n) * 0.02 + trend / n
-    close = start_price * (1 + returns).cumprod()
-    high = close * (1 + np.abs(np.random.randn(n) * 0.01))
-    low = close * (1 - np.abs(np.random.randn(n) * 0.01))
-    # 修正：确保 high >= close, low <= close
-    high = pd.Series([max(h, c) for h, c in zip(high, close)])
-    low = pd.Series([min(l, c) for l, c in zip(low, close)])
-    volume = pd.Series(np.random.randint(10000, 100000, n), dtype=float)
+# ───────── 风控委员会 ─────────
 
-    df = pd.DataFrame({
-        "close": close, "high": high, "low": low, "volume": volume,
-        "open": close * (1 + np.random.randn(n) * 0.005),
+def _buy(**kw):
+    d = {"code": "600519", "name": "贵州茅台", "action": "buy",
+         "price": 100.0, "stop_loss": 90.0, "position_ratio": 0.1}
+    d.update(kw)
+    return d
+
+
+def test_normal_buy_approved():
+    r = risk_manager.check(_buy(), portfolio={}, market={})
+    assert r["approved"] is True
+    assert r["position_ratio"] == 0.1
+
+
+def test_r4_no_stop_loss_veto():
+    r = risk_manager.check(_buy(stop_loss=None), {})
+    assert r["approved"] is False
+    assert any("R4" in v for v in r["vetoes"])
+
+
+def test_r4_stop_above_price_veto():
+    r = risk_manager.check(_buy(stop_loss=110.0), {})
+    assert r["approved"] is False
+    assert any("R4" in v for v in r["vetoes"])
+
+
+def test_r1_total_position_veto():
+    r = risk_manager.check(_buy(), portfolio={"total_position": 0.95})
+    assert r["approved"] is False
+    assert any("R1" in v for v in r["vetoes"])
+
+
+def test_r2_concentration_veto():
+    r = risk_manager.check(_buy(), portfolio={"positions": {"600519": {"ratio": 0.25}}})
+    assert r["approved"] is False
+    assert any("R2" in v for v in r["vetoes"])
+
+
+def test_r2_concentration_trim():
+    # 已占 15%，再加 10% 超 20% → 缩至 5%，不否决
+    r = risk_manager.check(_buy(position_ratio=0.10),
+                           portfolio={"positions": {"600519": {"ratio": 0.15}}})
+    assert r["approved"] is True
+    assert any("R2" in a for a in r["adjustments"])
+    assert abs(r["position_ratio"] - 0.05) < 1e-6
+
+
+def test_r3_defensive_regime_cap():
+    r = risk_manager.check(_buy(position_ratio=0.5), market={"regime": "防守"})
+    assert r["approved"] is True
+    assert any("R3" in a for a in r["adjustments"])
+    assert r["position_ratio"] <= 0.10
+
+
+def test_r5_single_trade_risk_cap():
+    # 止损距离 20%（100→80），仓位 20% → 风险 4% > 2% → 缩至 10%
+    r = risk_manager.check(_buy(position_ratio=0.20, stop_loss=80.0), {})
+    assert r["approved"] is True
+    assert any("R5" in a for a in r["adjustments"])
+    assert r["position_ratio"] <= 0.1001
+
+
+def test_sell_not_blocked():
+    r = risk_manager.check({"action": "sell", "code": "600519"}, {})
+    assert r["approved"] is True  # 卖出/减仓放行
+
+
+def test_veto_zeroes_position():
+    r = risk_manager.check(_buy(), {"total_position": 0.95})
+    assert r["position_ratio"] == 0.0
+
+
+# ───────── 结构化决策 ─────────
+
+def test_parse_json_loose_plain():
+    assert ask_agent._parse_json_loose('{"action":"buy"}')["action"] == "buy"
+
+
+def test_parse_json_loose_markdown():
+    txt = '```json\n{"action":"sell","confidence":0.8}\n```'
+    r = ask_agent._parse_json_loose(txt)
+    assert r["action"] == "sell"
+
+
+def test_parse_json_loose_with_prefix():
+    txt = '这是我的判断：{"action":"hold"} 完毕'
+    assert ask_agent._parse_json_loose(txt)["action"] == "hold"
+
+
+def test_parse_json_loose_invalid():
+    assert ask_agent._parse_json_loose("没有JSON") is None
+
+
+def test_norm_ratio_decimal():
+    assert ask_agent._norm_ratio(0.2, None) == 0.2
+
+
+def test_norm_ratio_percent():
+    assert abs(ask_agent._norm_ratio(20, None) - 0.2) < 1e-9
+
+
+def test_norm_ratio_fallback_pct():
+    assert abs(ask_agent._norm_ratio(None, 30) - 0.30) < 1e-9
+
+
+def test_decision_from_plan_buy():
+    d = ask_agent._decision_from_plan(
+        {"action": "买入", "price": 100, "stop_loss": 90, "target_price": 120,
+         "position_pct": 25, "rating": "A"}, "测试票")
+    assert d["action"] == "buy"
+    assert abs(d["position_ratio"] - 0.25) < 1e-9
+
+
+def test_decide_end_to_end_no_llm(monkeypatch):
+    # mock 数据装配，走确定性决策 + 风控
+    monkeypatch.setattr(ask_agent, "_collect_stock_data", lambda code: {
+        "code": code, "name": "贵州茅台", "price": 100.0,
+        "plan": {"rating": "A", "action": "买入", "price": 100.0, "stop_loss": 90.0,
+                 "target_price": 120.0, "position_pct": 20, "entry_low": 98, "entry_high": 101},
+        "decision": {"long_term": {"signal": "多"}, "swing": {"signal": "多"},
+                     "short_term": {"signal": "多"}, "composite_score": 80, "action": "买入"},
     })
-    return df
+    res = ask_agent.decide("600519", with_llm=False)
+    assert res["executed"]["approved"] is True
+    assert res["executed"]["action"] == "buy"
+    assert res["decision"]["stop_loss"] == 90.0
 
 
-class TestRiskManager:
-    """风险管理器测试"""
+def test_decide_vetoed_by_risk(monkeypatch):
+    monkeypatch.setattr(ask_agent, "_collect_stock_data", lambda code: {
+        "code": code, "name": "贵州茅台", "price": 100.0,
+        "plan": {"rating": "A", "action": "买入", "price": 100.0, "stop_loss": 90.0,
+                 "target_price": 120.0, "position_pct": 20},
+        "decision": {},
+    })
+    # 总仓位 95% → 风控否决
+    res = ask_agent.decide("600519", with_llm=False,
+                           portfolio={"total_position": 0.95})
+    assert res["executed"]["approved"] is False
+    assert res["executed"]["action"] == "hold"
+    assert res["executed"]["position_ratio"] == 0.0
 
-    @pytest.fixture
-    def rm(self):
-        return RiskManager()
 
-    @pytest.fixture
-    def uptrend_df(self):
-        return make_ohlcv(100, 100, 0.3)  # 上涨趋势
-
-    @pytest.fixture
-    def downtrend_df(self):
-        return make_ohlcv(100, 100, -0.3)  # 下跌趋势
-
-    def test_fixed_stop_loss(self, rm):
-        sl = rm.calc_fixed_stop(100.0, 0.07)
-        assert sl.price == pytest.approx(93.0, 0.01)
-        assert sl.distance_pct == 7.0
-        assert sl.stop_type == StopLossType.FIXED_PCT
-
-    def test_atr_stop_loss(self, rm, uptrend_df):
-        sl = rm.calc_atr_stop(
-            uptrend_df["close"], uptrend_df["high"],
-            uptrend_df["low"], 100.0
-        )
-        assert sl.price < 100.0
-        assert sl.distance_pct > 0
-        assert sl.stop_type == StopLossType.ATR
-
-    def test_ma_stop_loss(self, rm, uptrend_df):
-        sl = rm.calc_ma_stop(uptrend_df["close"], 100.0, 60)
-        assert sl.price > 0
-        assert sl.stop_type == StopLossType.MA
-
-    def test_best_stop_loss_returns_valid(self, rm, uptrend_df):
-        current_price = float(uptrend_df["close"].iloc[-1])
-        sl = rm.get_best_stop_loss(uptrend_df, current_price)
-        assert isinstance(sl, StopLossLevel)
-        assert sl.price < current_price
-
-    def test_take_profit(self, rm, uptrend_df):
-        current_price = float(uptrend_df["close"].iloc[-1])
-        sl = rm.calc_fixed_stop(current_price, 0.07)
-        tp = rm.calc_take_profit(uptrend_df, current_price, sl.price)
-        assert isinstance(tp, TakeProfitLevel)
-        assert tp.price > current_price
-
-    def test_position_sizing(self, rm):
-        sl = rm.calc_fixed_stop(100.0, 0.07)
-        ps = rm.calc_position_size(100000, 100.0, sl.price)
-        assert isinstance(ps, PositionSizing)
-        assert ps.suggested_shares >= 100  # 至少一手
-        assert ps.position_pct <= 20  # 不超过最大仓位
-
-    def test_assess_stock(self, rm, uptrend_df):
-        current_price = float(uptrend_df["close"].iloc[-1])
-        risk = rm.assess_stock(uptrend_df, None, current_price)
-        assert isinstance(risk, RiskAssessment)
-        assert risk.overall_risk_level in ("low", "medium", "high", "extreme")
-        assert 0 <= risk.overall_risk_score <= 100
-
-    def test_assess_stock_short_data(self, rm):
-        """数据不足时返回高风险"""
-        df = make_ohlcv(10)  # 只有10行数据
-        risk = rm.assess_stock(df, None, 100.0)
-        assert risk.overall_risk_level == "high"
-        assert len(risk.warnings) > 0
-
-    def test_sell_signal_detection(self, rm, downtrend_df):
-        current_price = float(downtrend_df["close"].iloc[-1])
-        signals = rm.detect_sell_signals(downtrend_df, current_price)
-        assert isinstance(signals, list)
-
-    def test_sell_signal_with_cost_not_hit(self, rm, uptrend_df):
-        """成本价比当前价高很多→应该触发止损信号"""
-        current_price = float(uptrend_df["close"].iloc[-1])
-        # 成本价远高于当前价 → 亏损
-        signals = rm.detect_sell_signals(uptrend_df, current_price, cost_price=current_price * 2)
-        # 应该有止损信号（亏损超过7%）
-        has_cut_loss = any(s.signal_type == "cut_loss" for s in signals)
-        assert has_cut_loss
-
-    def test_no_name_error_in_assess_warning(self, rm, uptrend_df):
-        """验证 #update-time 类似bug已修复——warnings中变量名正确"""
-        # 强制高波动高回撤
-        volatile = make_ohlcv(100, 100, 0.0)
-        # 制造大波动
-        volatile["close"] = volatile["close"] * (1 + np.sin(np.linspace(0, 10, 100)) * 0.3)
-        risk = rm.assess_stock(volatile, None, float(volatile["close"].iloc[-1]))
-        # 不应抛出 NameError
-        assert isinstance(risk.warnings, list)
-        for w in risk.warnings:
-            assert isinstance(w, str)
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-v"]))

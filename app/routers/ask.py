@@ -38,6 +38,49 @@ def ask(code: str = Query(..., description="股票代码，如 600519"),
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/decide")
+def decide(code: str = Query(..., description="股票代码"),
+           question: str = Query("", description="用户问题"),
+           strategy: str = Query(""),
+           with_llm: bool = Query(True),
+           total_position: float = Query(0.0, description="当前总仓位 0-1"),
+           single_ratio: float = Query(0.0, description="该票当前占比 0-1"),
+           regime: str = Query("", description="大盘 regime，如 防守/进攻"),
+           total_capital: float = Query(1000000.0)) -> Dict:
+    """结构化决策：LLM 出 JSON 指令 → 强制过风控闸 → 可执行决策"""
+    portfolio = {
+        "total_position": total_position,
+        "total_capital": total_capital,
+        "positions": {code: {"ratio": single_ratio}} if single_ratio else {},
+    }
+    market = {"regime": regime} if regime else {}
+    try:
+        result = ask_agent.decide(code, question=question, strategy_name=strategy,
+                                  portfolio=portfolio, market=market, with_llm=with_llm)
+        return {"ok": True, **result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/reflect")
+def reflect(horizon: int = Query(10, description="回看窗口(交易日)"),
+            with_llm: bool = Query(True)) -> Dict:
+    """跑一次 AI 复盘反思（读决策账本 → LLM 反思 → 存 memory/reflection.md）"""
+    from app.services import reflection
+    try:
+        return {"ok": True, **reflection.reflect(horizon_days=horizon, with_llm=with_llm)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/reflection")
+def get_reflection() -> Dict:
+    """读取最近一次复盘反思"""
+    from app.services import reflection
+    text = reflection.load_reflection()
+    return {"ok": True, "has_reflection": bool(text), "content": text}
+
+
 @router.post("/stream")
 def ask_stream(code: str = Query(..., description="股票代码"),
                question: str = Query("", description="用户问题"),

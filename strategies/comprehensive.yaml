@@ -3,6 +3,14 @@ name: comprehensive
 display_name: 综合诊断
 category: 默认
 aliases: [综合, 诊断, 全面, 默认]
+# 量化骨架：可被回测引擎/决策前置过滤消费（变量见 analysis/strategy_conditions.py）
+entry_conditions:
+  - "close > MA20"
+  - "MA5 > MA20"
+  - "RSI < 75"
+exit_conditions:
+  - "close < MA10"
+  - "RSI > 85"
 # 分析步骤（自然语言，注入 system prompt）
 instructions: |
   你是从业15年的A股私募基金经理。基于提供的个股真实数据，按以下框架输出诊断：

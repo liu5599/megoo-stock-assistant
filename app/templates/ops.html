@@ -182,6 +182,24 @@
         <div id="ask-area" style="margin-top:12px;"></div>
     </div>
 
+    <!-- AI 结构化决策 + 复盘 -->
+    <div class="card">
+        <div class="card-title">🎯 AI 决策（结构化指令 + 风控闸） <span style="font-size:0.75rem;font-weight:400;color:var(--text-muted)">输出 buy/sell/hold + 仓位，经风控一票否决</span></div>
+        <div class="btn-row">
+            <input type="text" id="dec-code" placeholder="股票代码，如 600519" style="width:120px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary);color:var(--text-primary);">
+            <input type="number" id="dec-total-pos" placeholder="总仓位%" value="0" min="0" max="100" style="width:90px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary);color:var(--text-primary);">
+            <input type="number" id="dec-single" placeholder="该票占比%" value="0" min="0" max="100" style="width:100px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary);color:var(--text-primary);">
+            <input type="text" id="dec-regime" placeholder="大盘regime(防守/进攻)" style="width:150px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary);color:var(--text-primary);">
+            <button class="btn btn-primary" id="btn-decide" onclick="decideStock()">🎯 出决策</button>
+        </div>
+        <div id="decide-area" style="margin-top:12px;"></div>
+        <div style="margin-top:10px;border-top:1px dashed var(--border);padding-top:10px;">
+            <button class="btn btn-secondary" id="btn-reflect" onclick="runReflect()">📝 跑一次 AI 复盘反思</button>
+            <button class="btn btn-secondary" onclick="loadReflection()">📖 查看最近复盘</button>
+            <div id="reflect-area" style="margin-top:10px;"></div>
+        </div>
+    </div>
+
     <!-- 决策账本 -->
     <div class="card">
         <div class="card-title">📒 决策账本 <span style="font-size:0.75rem;font-weight:400;color:var(--text-muted)">已保存交易计划按评级回看胜率（同源收盘价，非实盘）</span></div>
@@ -492,6 +510,81 @@ async function askStock() {
         box.innerHTML = '<div style="color:var(--red-up)">❌ 问股失败: ' + esc(e.message) + '</div>';
     } finally {
         btn.disabled = false; btn.textContent = '🤖 问股';
+    }
+}
+
+// ===== AI 结构化决策 =====
+async function decideStock() {
+    const code = document.getElementById('dec-code').value.trim();
+    if (!/^\d{6}$/.test(code)) { toast('请输入6位股票代码 ❌', false); return; }
+    const box = document.getElementById('decide-area');
+    const btn = document.getElementById('btn-decide');
+    btn.disabled = true; btn.textContent = '🎯 决策中...';
+    box.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem;">⏳ 装配数据 + LLM 出指令 + 风控过闸...</div>';
+    try {
+        const params = new URLSearchParams({
+            code,
+            total_position: (parseFloat(document.getElementById('dec-total-pos').value) || 0) / 100,
+            single_ratio: (parseFloat(document.getElementById('dec-single').value) || 0) / 100,
+        });
+        const regime = document.getElementById('dec-regime').value.trim();
+        if (regime) params.set('regime', regime);
+        const r = await fetch('/api/ask/decide?' + params.toString(), {method: 'POST'});
+        const d = await r.json();
+        if (!d.ok) { box.innerHTML = '<div style="color:var(--red-up)">❌ ' + esc(d.detail || '失败') + '</div>'; return; }
+        const dec = d.decision || {}, risk = d.risk || {}, ex = d.executed || {};
+        const actCls = ex.action === 'buy' ? 'up' : (ex.action === 'sell' ? 'down' : '');
+        let html = `<div class="regime-banner" style="border-color:${ex.approved ? '#2e7d32' : '#c62828'};">
+            <b>${esc(d.name)}（${esc(d.code)}）</b>
+            <span class="${actCls}" style="font-weight:700;font-size:16px;">${ex.approved ? '✅ 放行' : '🛑 风控否决'}</span>
+            <span>最终动作 <b>${esc(ex.action)}</b> ｜ 建议仓位 <b>${((ex.position_ratio||0)*100).toFixed(1)}%</b></span>
+            <span style="font-size:0.8rem;color:var(--text-muted);">置信度 ${(dec.confidence||0).toFixed(2)} ｜ 数据源:${d.deterministic ? '本地引擎' : 'LLM'}</span>
+        </div>`;
+        html += `<table class="data-table" style="margin-top:8px;"><tbody>
+            <tr><td>现价/止损/目标</td><td>${dec.price ?? '-'} / ${dec.stop_loss ?? '-'} / ${dec.target_price ?? '-'}</td></tr>
+            <tr><td>决策逻辑</td><td>${esc(dec.reasoning || '-')}</td></tr>
+        </tbody></table>`;
+        if ((risk.vetoes || []).length) {
+            html += '<div style="margin-top:8px;color:#c62828;font-size:0.85rem;">🛑 否决理由：<br>' +
+                risk.vetoes.map(v => '・' + esc(v)).join('<br>') + '</div>';
+        }
+        if ((risk.adjustments || []).length) {
+            html += '<div style="margin-top:8px;color:#e65100;font-size:0.85rem;">⚠️ 风控调整：<br>' +
+                risk.adjustments.map(a => '・' + esc(a)).join('<br>') + '</div>';
+        }
+        box.innerHTML = html;
+    } catch (e) {
+        box.innerHTML = '<div style="color:var(--red-up)">❌ 决策失败: ' + esc(e.message) + '</div>';
+    } finally {
+        btn.disabled = false; btn.textContent = '🎯 出决策';
+    }
+}
+
+// ===== AI 复盘反思 =====
+async function runReflect() {
+    const box = document.getElementById('reflect-area');
+    box.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem;">⏳ 读取决策账本 + LLM 反思中（约 10-40s）...</div>';
+    try {
+        const r = await fetch('/api/ask/reflect?horizon=10', {method: 'POST'});
+        const d = await r.json();
+        if (!d.ok || !d.available) { box.innerHTML = '<div style="color:var(--text-muted)">' + esc(d.msg || '暂无数据') + '</div>'; return; }
+        box.innerHTML = '<div class="report-box">' + esc(d.reflection).replace(/\n/g, '<br>') + '</div>' +
+            '<div style="font-size:0.75rem;color:var(--text-muted);margin-top:6px;">已存 ' + esc(d.path) + '</div>';
+        toast('复盘完成 ✅');
+    } catch (e) {
+        box.innerHTML = '<div style="color:var(--red-up)">❌ 复盘失败: ' + esc(e.message) + '</div>';
+    }
+}
+
+async function loadReflection() {
+    const box = document.getElementById('reflect-area');
+    try {
+        const r = await fetch('/api/ask/reflection');
+        const d = await r.json();
+        if (!d.has_reflection) { box.innerHTML = '<div style="color:var(--text-muted)">尚无复盘记录，点「跑一次 AI 复盘反思」</div>'; return; }
+        box.innerHTML = '<div class="report-box">' + esc(d.content).replace(/\n/g, '<br>') + '</div>';
+    } catch (e) {
+        box.innerHTML = '<div style="color:var(--red-up)">❌ ' + esc(e.message) + '</div>';
     }
 }
 
