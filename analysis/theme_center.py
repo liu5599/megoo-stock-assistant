@@ -128,6 +128,8 @@ def _safe_call(func, *args, retries: int = 1, **kwargs):
 
 # 东财概念板块熔断（新浪主源失败时才触发东财降级，失败一次后不再重试）
 _eastmoney_board_blocked = False
+# 东财概念成分股熔断（涨停池降级；连续失败 2 次后不再试主源，避免 502 时段白等）
+_eastmoney_cons_blocked = False
 
 
 @ttl_cache(300)
@@ -311,10 +313,38 @@ class ThemeCenter:
 
         return []
 
+    def _theme_detail_fallback(self, board_name: str) -> Dict:
+        """降级：涨停池中该行业股票（稳定源）"""
+        try:
+            zt = fetch_limit_up_pool()
+        except Exception as e:
+            logger.warning(f"涨停池降级获取失败: {e}")
+            zt = None
+        fallback = []
+        if zt is not None and not zt.empty and "所属行业" in zt.columns:
+            pool = _match_industries(board_name, zt)
+            for _, r in pool.iterrows():
+                fallback.append({
+                    "code": r.get("代码", ""),
+                    "name": r.get("名称", ""),
+                    "price": r.get("最新价"),
+                    "pct_chg": r.get("涨跌幅"),
+                    "turnover": None,
+                    "pe": None,
+                    "total_mv": None,
+                    "seal_amount": r.get("封板资金"),
+                    "boards": r.get("连板数"),
+                })
+        if fallback:
+            return {"name": board_name, "stocks": fallback,
+                    "leader": fallback[0] if fallback else None, "source": "涨停池降级"}
+        return {"name": board_name, "stocks": [], "leader": None}
+
     def get_theme_detail(self, board_name: str) -> Dict:
         """单个题材深度：成分股涨幅榜 → 龙头识别
         主源：东财概念成分；限频时降级为涨停池同行业股票。
         """
+        global _eastmoney_board_blocked
         # 快速失败守卫：东财主源全 502 时段，akshare 单次调用可拖 30s+。
         # 用全局熔断标记：已确认东财成分不可用时直接走降级，不再试主源。
         if _eastmoney_board_blocked:
@@ -326,11 +356,10 @@ class ThemeCenter:
             df = None
         if df is None or df.empty:
             # 主源连续失败 N 次即熔断（避免每次都白等 30s）
-            global _eastmoney_board_blocked
             _theme_fail = getattr(self, "_theme_fail_count", 0)
             self._theme_fail_count = _theme_fail + 1
             if self._theme_fail_count >= 2:
-                _eastmoney_board_blocked = True
+                _eastmoney_cons_blocked = True
                 logger.warning(f"题材成分连续失败{self._theme_fail_count}次 → 熔断东财成分源")
             return self._theme_detail_fallback(board_name)
         rename = {

@@ -304,24 +304,23 @@ def ops_theme_detail(board_name: str):
     if not stocks:
         return clean_jsonable(detail)
 
-    # 对成分股 top 8 跑交易计划评级（标注"值得买入"）
+    # 对成分股 top 8 跑交易计划评级（标注"值得买入"）—— 并发执行，避免串行 10 只 × 每只 20s+
     fetcher = get_best_fetcher()
-    enriched = []
     buy_list = []
-    for s in stocks[:10]:
+
+    def _rate_one(s):
         code = s.get("code", "")
         if not code:
-            continue
+            return None
         item = dict(s)
         try:
             kl = fetcher.get_history_kline(
                 code, "daily",
                 _t.strftime("%Y%m%d", _t.localtime(_t.time() - 400 * 86400)),
                 _t.strftime("%Y%m%d"), "qfq")
-            if kl is None or kl.data_count < 60:
+            if kl is None or getattr(kl, "data_count", 0) < 60:
                 item["rating"] = "-"
-                enriched.append(item)
-                continue
+                return item
             decision = None
             from analysis.decision_signals import DecisionSignals
             decision = DecisionSignals().comprehensive(kl)
@@ -341,12 +340,17 @@ def ops_theme_detail(board_name: str):
                 "wyckoff_phase": (plan.get("wyckoff") or {}).get("phase"),
                 "score": decision.get("composite_score") if decision else None,
             })
-            if plan["rating"] in ("S", "A"):
-                buy_list.append(item)
+            return item
         except Exception as e:
             logger.warning(f"题材成分评级失败 {code}: {e}")
             item["rating"] = "-"
-        enriched.append(item)
+            return item
+
+    with ThreadPoolExecutor(max_workers=min(5, len(stocks[:10]))) as pool:
+        enriched = [r for r in pool.map(_rate_one, stocks[:10]) if r is not None]
+    for item in enriched:
+        if item.get("rating") in ("S", "A"):
+            buy_list.append(item)
 
     return clean_jsonable({
         "name": detail.get("name"),
