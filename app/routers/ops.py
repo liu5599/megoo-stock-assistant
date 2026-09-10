@@ -304,13 +304,18 @@ def ops_theme_detail(board_name: str):
     if not stocks:
         return clean_jsonable(detail)
 
+    # 降级源（同花顺/涨停池）出现 = 主源故障，此时 K 线源大概率也不可用，
+    # 跑评级只会白等超时 → 直接返回成分列表，跳过评级（前端秒开）
+    if detail.get("source") in ("同花顺", "涨停池降级"):
+        return clean_jsonable({**detail, "buy_recommend": [],
+                               "note": f"数据源降级（{detail.get('source')}），已跳过个股评级"})
+
     # 对成分股 top 8 跑交易计划评级（标注"值得买入"）—— 并发 + 总超时预算
-    # K线源整体不可用时（东财502+腾讯失败+baostock挂），每只走完整降级链最坏几十秒，
-    # 这里加 20s 总预算：超时未完成的标的 rating 留空，保证接口快速返回不拖垮前端。
+    # K线源整体不可用时每只走完整降级链最坏几十秒，10s 预算：超时未完成的标 rating 留空。
     from concurrent.futures import ThreadPoolExecutor, wait
     fetcher = get_best_fetcher()
     buy_list = []
-    BUDGET = 20.0
+    BUDGET = 10.0
 
     def _rate_one(s):
         code = s.get("code", "")
