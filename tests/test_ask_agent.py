@@ -45,8 +45,23 @@ def test_summarize_empty_data():
     assert ask_agent._summarize_data({"error": "boom"}) == "数据获取失败: boom"
 
 
+def test_summarize_includes_capital_flow_and_news():
+    detail = {
+        "code": "600519", "name": "贵州茅台", "price": 1290.88,
+        "capital_flow": {"main_net_inflow_wan": 50000.0, "main_inflow_ratio": 3.5},
+        "recent_news": [{"title": "茅台业绩预增"}, {"title": "白酒板块回暖"}],
+    }
+    s = ask_agent._summarize_data(detail)
+    assert "资金面" in s and "5.00亿" in s
+    assert "近期新闻" in s and "茅台业绩预增" in s
+
+
+def test_summarize_without_capital_flow_ok():
+    s = ask_agent._summarize_data({"code": "600519", "name": "茅台", "price": 100.0})
+    assert "资金面" not in s  # 无数据不硬编
+
+
 def test_fallback_answer_no_llm():
-    # 不触发网络：mock _collect_stock_data
     detail = {
         "code": "600519", "name": "贵州茅台", "price": 1290.88,
         "decision": {"long_term": {"signal": "多"}, "swing": {"signal": "多"},

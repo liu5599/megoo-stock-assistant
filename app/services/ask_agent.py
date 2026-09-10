@@ -75,13 +75,43 @@ def resolve_strategy(text: str) -> Dict:
 # ───────────────────────── 数据装配 ─────────────────────────
 
 def _collect_stock_data(code: str) -> Dict:
-    """复用 ops_stock_detail 的装配逻辑拿真实数据（含降级容错）"""
+    """复用 ops_stock_detail 的装配逻辑拿真实数据（含降级容错）
+    并补充资金面：主力资金流 + 龙虎榜 + 近期新闻（缺失不阻断）。"""
     from app.routers.ops import ops_stock_detail
     try:
-        return ops_stock_detail(code)
+        detail = dict(ops_stock_detail(code))
     except Exception as e:
         logger.warning(f"问股数据装配失败 {code}: {e}")
         return {"code": code, "error": str(e)}
+
+    # 资金面（评审：只看技术面 = 盲诊）
+    try:
+        from data.data_utils import get_best_fetcher
+        cf = get_best_fetcher().get_capital_flow(code)
+        if cf:
+            detail["capital_flow"] = {
+                "main_net_inflow_wan": cf.main_net_inflow,
+                "super_large_net_inflow_wan": cf.super_large_net_inflow,
+                "main_inflow_ratio": cf.main_inflow_ratio,
+            }
+    except Exception as e:
+        logger.debug(f"问股资金流失败 {code}: {e}")
+
+    # 近期新闻（akshare，失败容错）
+    try:
+        import akshare as ak
+        ndf = ak.stock_news_em(symbol=code)
+        if ndf is not None and not ndf.empty:
+            news = []
+            for _, r in ndf.head(5).iterrows():
+                title = str(r.get("新闻标题") or "").strip()
+                if title:
+                    news.append({"title": title[:80], "time": str(r.get("发布时间") or "")[:16]})
+            detail["recent_news"] = news
+    except Exception as e:
+        logger.debug(f"问股新闻失败 {code}: {e}")
+
+    return detail
 
 
 def _summarize_data(detail: Dict, max_len: int = 6000) -> str:
@@ -113,6 +143,17 @@ def _summarize_data(detail: Dict, max_len: int = 6000) -> str:
     if val:
         lines.append(f"估值: PE分位{val.get('pe_pct', '-')}%  PB分位{val.get('pb_pct', '-')}%  "
                      f"区间: {val.get('zone_cn', val.get('zone', '-'))}")
+    # 资金面（主力资金流）
+    cf = detail.get("capital_flow") or {}
+    if cf:
+        main_wan = cf.get("main_net_inflow_wan")
+        if main_wan is not None:
+            lines.append(f"资金面: 主力净流入 {float(main_wan)/10000:.2f}亿"
+                         + (f"  占比{cf.get('main_inflow_ratio')}%" if cf.get('main_inflow_ratio') is not None else ""))
+    # 近期新闻
+    news = detail.get("recent_news") or []
+    if news:
+        lines.append("近期新闻: " + " ｜ ".join(n.get("title", "") for n in news[:4]))
     text = "\n".join(lines)
     return text[:max_len]
 
