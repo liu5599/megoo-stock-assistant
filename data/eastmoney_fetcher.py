@@ -91,7 +91,21 @@ class EastMoneyFetcher(DataFetcher):
                 },
             )
             if not data or "data" not in data:
-                # 东财限频/断连 → 腾讯批量实时行情兜底
+                # 东财限频/断连 → 同花顺官方源（有 Key 时）→ 腾讯兜底
+                ths_quotes = {}
+                try:
+                    from data.ths_client import available as _ths_ok, ths_snapshot_quotes
+                    if _ths_ok():
+                        ths_quotes = ths_snapshot_quotes(batch)
+                except Exception as e:
+                    logger.debug(f"同花顺快照降级失败: {e}")
+                if ths_quotes:
+                    # THS 快照只有代码无中文名 → 从本地 name 缓存补（不触发新请求，缓存未命中则留代码）
+                    for c, qq in ths_quotes.items():
+                        if c in self._name_cache:
+                            qq.name = self._name_cache[c]
+                    result.update(ths_quotes)
+                    continue
                 tencent = self._get_realtime_quote_from_tencent(batch)
                 result.update(tencent)
                 continue

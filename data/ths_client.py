@@ -144,14 +144,19 @@ def ths_snapshot_quotes(codes: List[str]) -> Dict[str, StockQuote]:
             ticker = it.get("ticker") or ""
             if not ticker:
                 continue
+            # 盘前/停牌时 last_price 为 null → 用昨收 prev_price 兜底，避免把 0 当真实价
+            last = it.get("last_price")
+            prev = it.get("prev_price")
+            price = float(last) if last is not None else (float(prev) if prev is not None else 0.0)
+            chg = it.get("price_change_ratio_pct")
             result[ticker] = StockQuote(
-                code=ticker, name=ticker, price=float(it.get("last_price") or 0),
-                change_pct=float(it.get("price_change_ratio_pct") or 0),
+                code=ticker, name=ticker, price=price,
+                change_pct=float(chg) if chg is not None else 0.0,
                 change_amount=0.0, amplitude=0.0,
                 open=float(it.get("open_price") or 0),
                 high=float(it.get("high_price") or 0),
                 low=float(it.get("low_price") or 0),
-                pre_close=float(it.get("prev_price") or 0),
+                pre_close=float(prev) if prev is not None else 0.0,
                 volume=float(it.get("volume") or 0) / 100,
                 amount=float(it.get("turnover") or 0),
                 turnover=0.0,
@@ -164,16 +169,24 @@ def ths_snapshot_quotes(codes: List[str]) -> Dict[str, StockQuote]:
 def ths_limit_up_pool(day: str = "", size: int = 200) -> Optional[pd.DataFrame]:
     """当日涨停/连板池 → megoo 兼容列(代码/名称/涨跌幅/连板数/封板资金/所属行业/涨停原因)。
     所属行业 THS 未提供，留空由上游聚类模块自行兜底。
+    day 为空时自动回退到最近有数据的交易日（盘前当天常为空）。
     """
     rows_all = []
     page = 1
+    cur_day = day
+    back = 0
     while True:
         data = _get("/api/a-share/special-data/limit-up-pool", {
-            "date_ms": _cst_day_ms(day), "page": page, "size": 100,
+            "date_ms": _cst_day_ms(cur_day), "page": page, "size": 100,
             "sort_field": "continue_day_cnt", "sort_dir": "desc",
         })
         items = data.get("item") or []
         if not items:
+            # 未指定日期且当天无数据 → 回退找最近交易日（最多 6 天，覆盖周末+节假日边缘）
+            if not day and back < 6:
+                back += 1
+                cur_day = (datetime.now(_CST) - timedelta(days=back)).strftime("%Y-%m-%d")
+                continue
             break
         for it in items:
             rows_all.append({
