@@ -172,6 +172,19 @@ def fetch_limit_up_pool(date: str = "") -> Optional[pd.DataFrame]:
     # 2. 东财
     ak = __import__("akshare", fromlist=["stock_zt_pool_em"])
     df = _safe_call(ak.stock_zt_pool_em, date=date)
+    if df is not None and not df.empty:
+        return df
+
+    # 3. 同花顺 Financial-API 兜底（东财限频/风控时，含连板数与涨停原因；无所属行业）
+    try:
+        from data.ths_client import available, ths_limit_up_pool
+        if available():
+            ths_df = ths_limit_up_pool(date[:4] + "-" + date[4:6] + "-" + date[6:8])
+            if ths_df is not None and not ths_df.empty:
+                logger.info(f"涨停池使用同花顺兜底: {len(ths_df)}家")
+                return ths_df
+    except Exception as e:
+        logger.debug(f"同花顺涨停池兜底失败: {e}")
     return df
 
 

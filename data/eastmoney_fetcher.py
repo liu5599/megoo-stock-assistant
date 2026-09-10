@@ -318,10 +318,20 @@ class EastMoneyFetcher(DataFetcher):
         self, code: str, period: str, start_date: str, end_date: str, adjust: str,
         is_index: bool = False,
     ) -> KLineData:
-        """末级兜底：东财+腾讯K线都不可用时走 baostock（唯一稳定含当日数据的免费通道）。
-        支持个股与指数(000xxx/399xxx 显式前缀)、日/周/月线。
-        ponytail: 串行锁全局粒度，个股量级(≤8)够用；吞吐上来再分片锁。
+        """末级兜底：东财+腾讯K线都不可用时，先同花顺(稳定HTTP)再 baostock。
+        支持个股日线；指数走 baostock 显式前缀。
+        ponytail: baostock 串行锁全局粒度，个股量级(≤8)够用；吞吐上来再分片锁。
         """
+        try:
+            # 同花顺日K（仅个股；指数 THS 需要独立端点暂不接）
+            if period == "daily" and not is_index:
+                from data.ths_client import available, ths_history_kline
+                if available():
+                    kl = ths_history_kline(code, start_date, end_date, adjust)
+                    if kl is not None and kl.df is not None and not kl.df.empty:
+                        return kl
+        except Exception as e:
+            logger.debug(f"同花顺K线兜底失败 {code}: {e}")
         try:
             from data.baostock_fetcher import BaostockFetcher
             with _BS_RLOCK:

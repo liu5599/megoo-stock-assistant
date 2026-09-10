@@ -101,7 +101,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="megoo股票助手",
         description="沪深A股多因子选股框架 Web 应用",
-        version="2.0.0",
+        version="4.0.0",
         lifespan=lifespan,
     )
 
