@@ -65,6 +65,33 @@ def _write_cache(key: str, df: pd.DataFrame):
         logger.debug(f"缓存写入失败: {e}")
 
 
+def _parallel_map(codes: List[str], worker, workers: int = 8) -> Dict[str, Any]:
+    """HTTP 源(东财/腾讯/同花顺)线程安全 → 并行拉取。baostock 不能走这里(非线程安全)。
+    返回 {code: 非 None 结果}；单只失败静默跳过并保持进度日志。
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    out: Dict[str, Any] = {}
+    total = len(codes)
+    if total == 0:
+        return out
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(worker, c): c for c in codes}
+        done = 0
+        for fut in as_completed(futs):
+            code = futs[fut]
+            try:
+                v = fut.result()
+                if v is not None:
+                    out[code] = v
+            except Exception:
+                pass
+            done += 1
+            if done % 20 == 0 or done == total:
+                logger.info(f"  并行进度: {done}/{total} ({len(out)}成功)")
+    return out
+
+
 def _is_baostock(fetcher) -> bool:
     """检测是否为 baostock 数据源（不支持并发）"""
     cls_name = type(fetcher).__name__
@@ -154,7 +181,26 @@ def fetch_stock_data(
         except Exception as e:
             logger.warning(f"批量K线获取失败: {e}")
 
-    # ── 2. 顺序获取（baostock 只能用这个） ──
+    # ── 2. 非 baostock: HTTP 源(东财/腾讯/同花顺)线程安全 → 并行拉取(原来逐只串行=选股几分钟) ──
+    if not is_bs:
+        def _worker(code: str):
+            try:
+                kline = fetcher.get_history_kline(
+                    code, period="daily",
+                    start_date=start_date, end_date=end_date,
+                    adjust="qfq",
+                )
+                if kline is not None and kline.df is not None and not kline.df.empty and len(kline.df) >= 21:
+                    return kline.df
+            except Exception:
+                pass
+            return None
+
+        kline_data = _parallel_map(stock_codes, _worker)
+        logger.info(f"K线获取完成: {len(kline_data)}/{len(stock_codes)}（并行）")
+        return kline_data
+
+    # ── 3. 顺序获取（baostock 只能用这个） ──
     kline_data: Dict[str, pd.DataFrame] = {}
     success_count = 0
     total = len(stock_codes)
@@ -217,7 +263,31 @@ def fetch_financial_data(
         except Exception as e:
             logger.warning(f"批量财务获取失败: {e}")
 
-    # ── 顺序获取 ──
+    # ── 非 baostock: HTTP 源线程安全 → 并行拉取财务(原来逐只串行≈76只×1s+) ──
+    if not is_bs:
+        def _worker(code: str):
+            try:
+                fin = fetcher.get_financial_data(code)
+                if fin is not None and fin.pe is not None:
+                    return {
+                        "pe": fin.pe,
+                        "pb": fin.pb,
+                        "roe": fin.roe,
+                        "revenue_growth": fin.revenue_growth,
+                        "profit_growth": fin.profit_growth,
+                        "debt_ratio": fin.debt_ratio,
+                        "gross_margin": fin.gross_margin,
+                        "total_market_cap": fin.total_market_cap,
+                    }
+            except Exception:
+                pass
+            return None
+
+        financial_data = _parallel_map(stock_codes, _worker)
+        logger.info(f"财务获取完成: {len(financial_data)}/{len(stock_codes)}（并行）")
+        return financial_data
+
+    # ── 顺序获取（baostock 只能用这个） ──
     financial_data: Dict[str, Dict] = {}
     success_count = 0
     total = len(stock_codes)

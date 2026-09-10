@@ -155,7 +155,9 @@ class RankingService:
 
         # 全市场股票池（default/popular/all）
         try:
-            df = fetcher.get_all_stocks_spot()
+            # popular 只需前300(3页)；all 才拉全(20页≈2000只) —— 东财挂时每页都慢，少拉页=快10倍
+            need_pages = 3 if pool in ("popular", "default") else 20
+            df = fetcher.get_all_stocks_spot(max_pages=need_pages)
             if df.empty:
                 logger.warning("全市场行情为空，使用应急硬编码池")
                 from config.stock_lists import POPULAR_STOCKS
