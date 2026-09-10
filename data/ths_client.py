@@ -207,6 +207,81 @@ def ths_limit_up_pool(day: str = "", size: int = 200) -> Optional[pd.DataFrame]:
     return df.head(size) if size and len(df) > size else df
 
 
+# ───────────────────────── 概念板块成分 ─────────────────────────
+
+_board_catalog = {"ts": 0.0, "map": {}}  # {name: thscode}，目录缓存 1 天
+
+
+def ths_board_thscode(board_name: str) -> Optional[str]:
+    """概念板块名 → THS 板块代码（如 人工智能 → 885728.TI）。目录缓存 1 天。"""
+    now = time.time()
+    if now - _board_catalog["ts"] > 86400 or not _board_catalog["map"]:
+        try:
+            data = _get("/api/a-share-index/catalog/ths-index-list", {"tag": "cn_concept"}, retries=1)
+            m = {}
+            for it in data.get("item") or []:
+                nm = (it.get("name") or "").strip()
+                if nm and it.get("thscode"):
+                    m[nm] = it["thscode"]
+            if m:
+                _board_catalog["map"] = m
+                _board_catalog["ts"] = now
+                logger.info(f"同花顺概念目录已缓存: {len(m)} 个")
+        except Exception as e:
+            logger.debug(f"同花顺概念目录拉取失败: {e}")
+    m = _board_catalog["map"]
+    if board_name in m:
+        return m[board_name]
+    # 宽松匹配：包含关系（如 "机器人" → "机器人概念"）
+    for nm, tc in m.items():
+        if board_name and board_name in nm:
+            return tc
+    return None
+
+
+def ths_board_constituents(board_name: str, limit: int = 50) -> Optional[pd.DataFrame]:
+    """概念板块成分股（含最新价）→ megoo 兼容列(代码/名称/最新价/涨跌幅)。
+    两步：目录找板块码 → 成分股列表 → 快照补价。无价格时价格列为 None。
+    """
+    tc = ths_board_thscode(board_name)
+    if not tc:
+        return None
+    try:
+        data = _get("/api/a-share-index/constituents/ths-stock-list", {"thscode": tc}, retries=1)
+    except Exception as e:
+        logger.debug(f"同花顺板块成分失败 [{board_name}/{tc}]: {e}")
+        return None
+    items = data.get("item") or []
+    if not items:
+        return None
+    codes = [it.get("ticker") for it in items if it.get("ticker")]
+    names = {it.get("ticker"): it.get("name") for it in items if it.get("ticker")}
+    if not codes:
+        return None
+    # 只取前 limit 只补快照（板块成分可达上千只，全量补价过慢）
+    codes = codes[:limit]
+    quotes = {}
+    try:
+        quotes = ths_snapshot_quotes(codes)
+    except Exception as e:
+        logger.debug(f"同花顺成分快照失败: {e}")
+    rows = []
+    for c in codes:
+        q = quotes.get(c)
+        rows.append({
+            "code": c, "name": names.get(c, c),
+            "price": q.price if q else None,
+            "pct_chg": q.change_pct if q else None,
+            "turnover": None, "pe": None, "total_mv": None,
+        })
+    df = pd.DataFrame(rows)
+    # 有价格则按涨幅排序
+    if "pct_chg" in df.columns and df["pct_chg"].notna().any():
+        df["pct_chg"] = pd.to_numeric(df["pct_chg"], errors="coerce")
+        df = df.sort_values("pct_chg", ascending=False)
+    return df
+
+
 if __name__ == "__main__":
     # 自检：有 Key 时跑最小真实请求
     assert available(), "未配置 HITHINK_FINANCE_API_KEY"

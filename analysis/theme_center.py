@@ -50,14 +50,18 @@ CONCEPT_INDUSTRY_MAP = {
 
 
 def _match_industries(board_name: str, zt: pd.DataFrame) -> pd.DataFrame:
-    """概念名 → 涨停池行业匹配（直接包含 + 映射表补充）"""
-    if "所属行业" not in zt.columns:
+    """概念名 → 涨停池匹配（优先行业字段，THS 池无行业时用涨停原因兜底 + 映射表补充）"""
+    cols = [c for c in ("所属行业", "涨停原因") if c in zt.columns]
+    if not cols:
         return zt.iloc[0:0]
-    mask = zt["所属行业"].astype(str).str.contains(board_name, na=False)
+    mask = pd.Series(False, index=zt.index)
+    for c in cols:
+        mask = mask | zt[c].astype(str).str.contains(board_name, na=False, regex=False)
     for keyword, industries in CONCEPT_INDUSTRY_MAP.items():
         if keyword in board_name:
             for ind in industries:
-                mask = mask | zt["所属行业"].astype(str).str.contains(ind, na=False)
+                for c in cols:
+                    mask = mask | zt[c].astype(str).str.contains(ind, na=False, regex=False)
     return zt[mask]
 
 
@@ -377,6 +381,19 @@ class ThemeCenter:
             _eastmoney_cons_blocked = True
             ThemeCenter._theme_fail_count += 1
             logger.warning(f"题材成分获取失败(第{ThemeCenter._theme_fail_count}次) → 熔断东财成分源")
+            # 降级1：同花顺官方板块成分（覆盖全，含价格）
+            try:
+                from data.ths_client import available as _ths_ok, ths_board_constituents
+                if _ths_ok():
+                    tdf = ths_board_constituents(board_name, limit=30)
+                    if tdf is not None and not tdf.empty:
+                        recs = tdf.to_dict("records")
+                        logger.info(f"题材成分使用同花顺降级: {board_name} {len(recs)}只")
+                        return {"name": board_name, "stocks": recs,
+                                "leader": recs[0] if recs else None, "source": "同花顺"}
+            except Exception as e:
+                logger.debug(f"同花顺板块成分降级失败: {e}")
+            # 降级2：涨停池同行业
             return self._theme_detail_fallback(board_name)
         rename = {
             "代码": "code", "名称": "name", "最新价": "price",
