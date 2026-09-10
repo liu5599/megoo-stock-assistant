@@ -213,6 +213,9 @@ def fetch_board_cons(symbol: str) -> Optional[pd.DataFrame]:
 class ThemeCenter:
     """题材中心 —— 新题材挖得快 + 热题材挖得深 + 情绪个股挖得精"""
 
+    # 题材成分连续失败计数（类级共享：每次 new ThemeCenter() 不重置）
+    _theme_fail_count = 0
+
     def __init__(self, top_n: int = 15):
         self.top_n = top_n
 
@@ -344,10 +347,10 @@ class ThemeCenter:
         """单个题材深度：成分股涨幅榜 → 龙头识别
         主源：东财概念成分；限频时降级为涨停池同行业股票。
         """
-        global _eastmoney_board_blocked
+        global _eastmoney_cons_blocked
         # 快速失败守卫：东财主源全 502 时段，akshare 单次调用可拖 30s+。
         # 用全局熔断标记：已确认东财成分不可用时直接走降级，不再试主源。
-        if _eastmoney_board_blocked:
+        if _eastmoney_cons_blocked:
             return self._theme_detail_fallback(board_name)
         try:
             df = fetch_board_cons(board_name)
@@ -355,12 +358,11 @@ class ThemeCenter:
             logger.warning(f"题材成分获取异常 {board_name}: {e}")
             df = None
         if df is None or df.empty:
-            # 主源连续失败 N 次即熔断（避免每次都白等 30s）
-            _theme_fail = getattr(self, "_theme_fail_count", 0)
-            self._theme_fail_count = _theme_fail + 1
-            if self._theme_fail_count >= 2:
+            # 主源连续失败 N 次即熔断（避免每次都白等 30s）。类级计数跨实例共享。
+            ThemeCenter._theme_fail_count += 1
+            if ThemeCenter._theme_fail_count >= 2:
                 _eastmoney_cons_blocked = True
-                logger.warning(f"题材成分连续失败{self._theme_fail_count}次 → 熔断东财成分源")
+                logger.warning(f"题材成分连续失败{ThemeCenter._theme_fail_count}次 → 熔断东财成分源")
             return self._theme_detail_fallback(board_name)
         rename = {
             "代码": "code", "名称": "name", "最新价": "price",

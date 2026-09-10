@@ -305,6 +305,7 @@ def ops_theme_detail(board_name: str):
         return clean_jsonable(detail)
 
     # 对成分股 top 8 跑交易计划评级（标注"值得买入"）—— 并发执行，避免串行 10 只 × 每只 20s+
+    from concurrent.futures import ThreadPoolExecutor
     fetcher = get_best_fetcher()
     buy_list = []
 
