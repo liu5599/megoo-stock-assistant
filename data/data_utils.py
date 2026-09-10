@@ -42,7 +42,7 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 
 def _cache_path(key: str) -> str:
     h = hashlib.md5(key.encode()).hexdigest()[:16]
-    return os.path.join(CACHE_DIR, f"{h}.parquet")
+    return os.path.join(CACHE_DIR, f"{h}.pkl")
 
 
 def _read_cache(key: str, max_age_hours: int = 4) -> Optional[pd.DataFrame]:
@@ -53,14 +53,14 @@ def _read_cache(key: str, max_age_hours: int = 4) -> Optional[pd.DataFrame]:
     if age > max_age_hours * 3600:
         return None
     try:
-        return pd.read_parquet(path)
+        return pd.read_pickle(path)
     except Exception:
         return None
 
 
 def _write_cache(key: str, df: pd.DataFrame):
     try:
-        df.to_parquet(_cache_path(key))
+        df.to_pickle(_cache_path(key))
     except Exception as e:
         logger.debug(f"缓存写入失败: {e}")
 

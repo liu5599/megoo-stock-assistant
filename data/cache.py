@@ -119,10 +119,10 @@ class DataCache:
             logger.debug(f"缓存已过期: {cache_key} (age={age:.0f}s, ttl={row['ttl_seconds']}s)")
             return None
 
-        # 反序列化Parquet
+        # 反序列化缓存(先试 pickle；旧 parquet blob 读取失败即命中失效)
         try:
             buf = io.BytesIO(row["data_blob"])
-            df = pd.read_parquet(buf)
+            df = pd.read_pickle(buf)
             logger.debug(f"缓存命中: {cache_key} ({len(df)}行)")
             return df
         except Exception as e:
@@ -150,9 +150,9 @@ class DataCache:
 
         conn = self._get_conn()
 
-        # 序列化为Parquet
+        # 序列化(pickle 无 pyarrow 依赖；parquet 需 pyarrow/fastparquet 未装会 500)
         buf = io.BytesIO()
-        df.to_parquet(buf)
+        df.to_pickle(buf)
         blob = buf.getvalue()
 
         meta_json = json.dumps(metadata or {}, ensure_ascii=False)
